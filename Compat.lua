@@ -356,6 +356,7 @@ local function Step()
 		if name then
 			if p.refillOnly then
 				post = nil	-- already something there (e.g. a split still settling); good enough
+				if G.Atr_OnRefillSettled then Atr_OnRefillSettled() end
 				return
 			end
 			if nativeCount == p.size then
@@ -386,6 +387,7 @@ local function Step()
 				ClickAuctionSellItemButton()
 			end
 			post = nil
+			if G.Atr_OnRefillSettled then Atr_OnRefillSettled() end
 			return
 		end
 

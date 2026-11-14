@@ -311,7 +311,7 @@
 					<OnLoad>
 						this:SetMinMaxValues(0, 100);
 						this:SetValueStep(5);
-						this:SetValue(AUCTIONATOR_SAVEDVARS.BIDDING_RATIO);
+						this:SetValue(AUCTIONATOR_SAVEDVARS and AUCTIONATOR_SAVEDVARS.BIDDING_RATIO or 0);	-- AUCTIONATOR_SAVEDVARS isn't loaded yet this early; Atr_SetupUCConfigFrame() sets the real value once the panel is actually shown
 						getglobal(this:GetName().."Low"):SetText("1c");
 						getglobal(this:GetName().."High"):SetText("Same as Buyout");
 					</OnLoad>

@@ -98,6 +98,7 @@ local gJustPosted_BuyoutPrice;
 local gJustPosted_StackSize;
 local gJustPosted_NumInBagsAtStart;
 local gJustPosted_NumStacks;
+local gJustPosted_Deposit;		-- per-auction deposit cost, recorded at post time so it can later be shown/reported on cancel
 
 local auctionator_pending_message = nil;
 
@@ -505,7 +506,11 @@ function Atr_OnLoad()
 	if (AUCTIONATOR_PRICING_HISTORY == nil) then	-- the old history of postings
 		AUCTIONATOR_PRICING_HISTORY = {};
 	end
-	
+
+	if (AUCTIONATOR_DEPOSITS == nil) then	-- deposit paid per posting, so it can be shown/reported later (e.g. on cancel)
+		AUCTIONATOR_DEPOSITS = {};
+	end
+
 	if (AUCTIONATOR_TOONS == nil) then
 		AUCTIONATOR_TOONS = {};
 	end
@@ -681,8 +686,9 @@ function Atr_Init()
 	recommendElements[3] = getglobal ("Atr_RecommendPerItem_Price");
 	recommendElements[4] = getglobal ("Atr_RecommendPerStack_Text");
 	recommendElements[5] = getglobal ("Atr_RecommendPerStack_Price");
-	recommendElements[6] = getglobal ("Atr_Recommend_Basis_Text");
-	recommendElements[7] = getglobal ("Atr_RecommendItem_Tex");
+	recommendElements[6] = getglobal ("Atr_RecommendItem_Tex");
+	recommendElements[7] = getglobal ("Atr_RecommendDeposit_Text");
+	recommendElements[8] = getglobal ("Atr_RecommendDeposit_Price");
 
 	-- create the lines that appear in the item history scroll pane / Buy-tab shopping lists.
 	-- height and position are set per-redraw (see Atr_DisplayHlist / Atr_SList:DisplayX) since
@@ -1110,6 +1116,8 @@ function Atr_CreateAuction_OnClick ()
 	local duration				= UIDropDownMenu_GetSelectedValue(Atr_Duration);
 	local stackStartingPrice	= math.max (MoneyInputFrame_GetCopper(Atr_StartingPrice), 1);		-- the auction house requires a starting price of at least 1c
 
+	gJustPosted_Deposit = Atr_CalcDeposit (gJustPosted_ItemLink, gJustPosted_ItemName, gJustPosted_StackSize, duration);
+
 	if (gJustPosted_StackSize == 1 and gCurrentPane.fullStackSize > 1) then
 	
 		local scan = gCurrentPane.activeScan;
@@ -1156,6 +1164,7 @@ function Atr_OnAuctionMultiSellUpdate()
 	if (stacksSoFar == stacksTotal) then
 		Atr_LogMsg (gJustPosted_ItemLink, gJustPosted_StackSize, gJustPosted_BuyoutPrice, stacksTotal);
 		Atr_AddHistoricalPrice (gJustPosted_ItemName, gJustPosted_BuyoutPrice / gJustPosted_StackSize, gJustPosted_StackSize, gJustPosted_ItemLink);
+		Atr_RecordDeposit ();
 	end
 	
 end
@@ -1169,6 +1178,7 @@ function Atr_OnAuctionMultiSellFailure()
 	-- went through, and only for that many - never claim one more succeeded than we actually saw.
 	if (gMS_stacksPrev > 0) then
 		Atr_LogMsg (gJustPosted_ItemLink, gJustPosted_StackSize, gJustPosted_BuyoutPrice, gMS_stacksPrev);
+		Atr_RecordDeposit ();
 	end
 
 	if (gCurrentPane.activeScan) then
@@ -1192,23 +1202,12 @@ function Atr_LogMsg (itemlink, itemcount, price, numstacks)
 
 	itemlink = Atr_BuildDisplayLink (itemlink) or itemlink;
 
-	local logmsg = string.format (ZT("Auction created for %s"), itemlink);
-	
-	if (numstacks > 1) then
-		logmsg = string.format (ZT("%d auctions created for %s"), numstacks, itemlink);
-	end
-	
-	
-	if (itemcount > 1) then
-		logmsg = logmsg.."|cff00ddddx"..itemcount.."|r";
-	end
+	local totalDeposit = (gJustPosted_Deposit or 0) * numstacks;
+	local stackWord = (numstacks == 1) and ZT("stack of") or ZT("stacks of");
+	local coloredCount = "|cff00dddd"..numstacks.." "..stackWord.." "..itemcount.."x|r";
 
-	logmsg = logmsg.."   "..zc.priceToString(price);
-
-	if (numstacks > 1 and itemcount > 1) then
-		logmsg = logmsg.."  per stack";
-	end
-	
+	local logmsg = string.format (ZT("Auctions created for %s %s - Total deposit paid: %s, Buyout Price per stack: %s"),
+		coloredCount, itemlink, zc.priceToString (totalDeposit), zc.priceToString (price));
 
 	zc.msg_yellow (logmsg);
 
@@ -1239,6 +1238,7 @@ function Atr_OnAuctionOwnedUpdate ()
 			Atr_LogMsg (gJustPosted_ItemLink, gJustPosted_StackSize, gJustPosted_BuyoutPrice, 1);
 			Atr_AddHistoricalPrice (gJustPosted_ItemName, gJustPosted_BuyoutPrice / gJustPosted_StackSize, gJustPosted_StackSize, gJustPosted_ItemLink);
 			Atr_AddToScan (gJustPosted_ItemName, gJustPosted_StackSize, gJustPosted_BuyoutPrice, 1);
+			Atr_RecordDeposit ();
 		end
 	end
 
@@ -1922,7 +1922,11 @@ end
 
 function Atr_UpdateRecommendation (updatePrices)
 
-	if (gCurrentPane == gSellPane and gJustPosted_ItemLink and GetAuctionSellItemInfo() == nil) then
+	-- gJustPosted_ItemLink stays set indefinitely after posting (not cleared just because the
+	-- slot ends up empty), so gating on it here used to block this function forever once the
+	-- sell slot settled empty - not just during the brief transient window right after the last
+	-- auction posts, which is all this was ever meant to guard against
+	if (gCurrentPane == gSellPane and Atr_PostingInProgress()) then
 		return;
 	end
 
@@ -1977,19 +1981,18 @@ function Atr_UpdateRecommendation (updatePrices)
 		end
 	end
 
-	if (Atr_StackSize() == 0) then
-		return;
-	end
-
 	local new_Item_BuyoutPrice;
-	
+	local recommendStackSize;
+
 	if (gItemPostingInProgress and gCurrentPane.itemLink == gJustPosted_ItemLink) then	-- handle the unusual case where server is still in the process of creating the last auction
 
 		new_Item_BuyoutPrice = gJustPosted_BuyoutPrice / gJustPosted_StackSize;
-		
+		recommendStackSize = gJustPosted_StackSize;
+
 	elseif (basedata) then			-- the normal case
-	
+
 		new_Item_BuyoutPrice = basedata.itemPrice;
+		recommendStackSize = basedata.stackSize;
 
 		if (not basedata.yours and not basedata.altname) then
 			new_Item_BuyoutPrice = Atr_CalcUndercutPrice (new_Item_BuyoutPrice);
@@ -2006,15 +2009,70 @@ function Atr_UpdateRecommendation (updatePrices)
 	AuctionatorMessageFrame:Hide();
 	AuctionatorMessage2Frame:Hide();
 
-	Atr_Recommend_Text:SetText (ZT("Recommended Buyout Price"));
-	Atr_RecommendPerStack_Text:SetText (string.format (ZT("for your stack of %d"), Atr_StackSize()));
+	local scn = gCurrentPane.activeScan;
+	local itemNameColored = scn.itemName;
+	if (scn.itemTextColor) then
+		itemNameColored = "|cff"..zc.RGBtoHEX (scn.itemTextColor[1], scn.itemTextColor[2], scn.itemTextColor[3])..scn.itemName.."|r";
+	end
 
-	Atr_SetTextureButton ("Atr_RecommendItem_Tex", Atr_StackSize(), gCurrentPane.activeScan.itemLink);
+	local coloredCount = "|cff55ddff"..recommendStackSize.."x|r";
+	Atr_Recommend_Text:SetText (string.format (ZT("Buyout Price for %s %s"), coloredCount, itemNameColored));
+	Atr_RecommendPerStack_Text:SetText ("|cff55ddfffor "..recommendStackSize.."|r");
+
+	if (basedata and basedata.yours and Atr_ShowingCurrentAuctions()) then
+		local deposit = Atr_GetRecordedDeposit (scn.itemName, basedata.buyoutPrice, basedata.stackSize);
+		if (deposit) then
+			-- identical auctions (same stack size and buyout price) condense into one row with a
+			-- count, instead of a separate row each - multiply the per-auction deposit by that
+			-- count for the true total
+			local count = basedata.count or 1;
+			local totalDeposit = deposit * count;
+
+			Atr_RecommendDeposit_Text:SetText (ZT("Total deposit paid")..":");
+
+			-- shift the money display left when it has fewer denominations, so a short amount
+			-- doesn't leave a big empty gap between it and the label
+			local depositX = -10;
+			if (totalDeposit < 100) then
+				depositX = -70;		-- copper only
+			elseif (totalDeposit < 10000) then
+				depositX = -35;		-- silver + copper
+			end
+			Atr_RecommendDeposit_Price:ClearAllPoints ();
+			Atr_RecommendDeposit_Price:SetPoint ("TOPRIGHT", depositX, -123);
+
+			MoneyFrame_Update ("Atr_RecommendDeposit_Price", totalDeposit);
+			Atr_RecommendDeposit_Text:Show ();
+			Atr_RecommendDeposit_Price:Show ();
+		else
+			Atr_RecommendDeposit_Text:Hide ();
+			Atr_RecommendDeposit_Price:Hide ();
+		end
+	else
+		Atr_RecommendDeposit_Text:Hide ();
+		Atr_RecommendDeposit_Price:Hide ();
+	end
+
+	Atr_SetTextureButton ("Atr_RecommendItem_Tex", recommendStackSize, gCurrentPane.activeScan.itemLink);
 
 	MoneyFrame_Update ("Atr_RecommendPerItem_Price",  zc.round(new_Item_BuyoutPrice));
-	MoneyFrame_Update ("Atr_RecommendPerStack_Price", zc.round(new_Item_BuyoutPrice * Atr_StackSize()));
+	MoneyFrame_Update ("Atr_RecommendPerStack_Price", zc.round(new_Item_BuyoutPrice * recommendStackSize));
 
-	if (updatePrices) then
+	Atr_RecommendPerStack_Text:Show ();
+	Atr_RecommendPerStack_Price:Show ();
+
+	-- the per-item price is redundant with the per-stack price when the stack is just one item
+	if (recommendStackSize > 1) then
+		Atr_RecommendPerItem_Text:Show ();
+		Atr_RecommendPerItem_Price:Show ();
+	else
+		Atr_RecommendPerItem_Text:Hide ();
+		Atr_RecommendPerItem_Price:Hide ();
+	end
+
+	-- clicking an auction row only feeds its price into the Sell tab's own input fields while
+	-- actually composing there - on the Buy/Listings tabs it's purely informational
+	if (updatePrices and Atr_IsModeCreateAuction()) then
 		if (gBuyoutIsPerItem) then
 			MoneyInputFrame_SetCopper (Atr_StackPrice,	new_Item_BuyoutPrice);
 		else
@@ -2025,21 +2083,6 @@ function Atr_UpdateRecommendation (updatePrices)
 		Atr_UpdateItemPriceButton ();
 	end
 	
-	local cheapestStack = gCurrentPane.activeScan.bestPrices[Atr_StackSize()];
-
-	Atr_Recommend_Basis_Text:SetTextColor (1,1,1);
-
-	if (Atr_ShowingHints()) then
-		Atr_Recommend_Basis_Text:SetTextColor (.8,.8,1);
-		Atr_Recommend_Basis_Text:SetText ("("..ZT("based on").." "..basedata.sourceText..")");
-	elseif (gCurrentPane.activeScan.absoluteBest and basedata.stackSize == gCurrentPane.activeScan.absoluteBest.stackSize and basedata.buyoutPrice == gCurrentPane.activeScan.absoluteBest.buyoutPrice) then
-		Atr_Recommend_Basis_Text:SetText ("("..ZT("based on cheapest current auction")..")");
-	elseif (cheapestStack and basedata.stackSize == cheapestStack.stackSize and basedata.buyoutPrice == cheapestStack.buyoutPrice) then
-		Atr_Recommend_Basis_Text:SetText ("("..ZT("based on cheapest stack of the same size")..")");
-	else
-		Atr_Recommend_Basis_Text:SetText ("("..ZT("based on selected auction")..")");
-	end
-
 end
 
 
@@ -2530,7 +2573,25 @@ function Atr_OnNewAuctionUpdate()
 	end
 		
 	gSellPane.UINeedsUpdate = true;
-	
+
+end
+
+-----------------------------------------
+
+-- after a multi-stack post finishes, Compat.lua moves whatever's left of the item back into the
+-- sell slot itself rather than leaving it empty - that's not a player-driven slot change, so the
+-- gAtr_ClickAuctionSell gate above never sees it and the cached bag count (used by the max
+-- buttons and the Create-Auctions button's enabled state) goes stale. Re-sync just that, leaving
+-- whatever price/stacking the player already configured untouched.
+function Atr_OnRefillSettled ()
+
+	local auctionItemName = GetAuctionSellItemInfo();
+
+	if (auctionItemName) then
+		gSellPane.totalItems = Atr_GetNumItemInBags (auctionItemName);
+	end
+
+	gSellPane.UINeedsUpdate = true;
 end
 
 ---------------------------------------------------------
@@ -2564,9 +2625,13 @@ function Atr_UpdateUI ()
 
 		Atr_SetMessage ("");
 		local scn = gCurrentPane.activeScan;
-		
-		if (Atr_IsModeCreateAuction()) then
-		
+
+		-- used to only run on the Sell tab, falling back to a bare icon+name everywhere else even
+		-- once a specific auction/history/hint row was selected there - the fallback is only
+		-- actually appropriate when there's no item scan to show details for at all (e.g. the Buy
+		-- tab's multi-item search results list, before drilling into one specific item)
+		if (Atr_IsModeCreateAuction() or not scn:IsNil()) then
+
 			Atr_UpdateRecommendation (false);
 		else
 			Atr_HideElems (recommendElements);
@@ -2615,7 +2680,7 @@ end
 
 function Atr_UpdateUI_SellPane (needsUpdate)
 
-	local auctionItemName = GetAuctionSellItemInfo();
+	local auctionItemName, _, auctionItemCount = GetAuctionSellItemInfo();
 
 	if (needsUpdate) then
 
@@ -2645,9 +2710,24 @@ function Atr_UpdateUI_SellPane (needsUpdate)
 
 			Atr_UpdateItemPriceButton ();
 
-			Atr_SetTextureButton ("Atr_SellControls_Tex", Atr_StackSize(), Atr_GetItemLink(auctionItemName));
+			Atr_SetTextureButton ("Atr_SellControls_Tex", auctionItemCount or 0, Atr_GetItemLink(auctionItemName));
+			Atr_SellControls_TexName:SetText (auctionItemName or "");
 
-			
+			-- the event-driven clear in Atr_OnNewAuctionUpdate doesn't reliably fire once the sell
+			-- slot settles into "still empty" right after the last auction of a batch posts (the
+			-- native sell-item-changed event only fires on an actual change) - clear these from the
+			-- live slot state here too, same as a manual drag-out already does. Only once posting
+			-- has fully settled though - the slot sits briefly empty between stacks mid-batch, and
+			-- that must not be mistaken for "actually emptied out".
+			if (auctionItemName == nil and not Atr_PostingInProgress()) then
+				MoneyInputFrame_SetCopper (Atr_StackPrice, 0);
+				MoneyInputFrame_SetCopper (Atr_StartingPrice, 0);
+				Atr_SetStackSize (0);
+				Atr_Batch_NumAuctions:SetText (0);
+				Atr_Batch_Stacksize_Text:SetText (ZT("stack of"));
+				Atr_CreateAuctionButton:SetText (ZT("Create Auction"));
+			end
+
 			local maxAuctions = 0;
 			if (Atr_StackSize() > 0) then
 				maxAuctions = math.floor (gCurrentPane.totalItems / Atr_StackSize());
@@ -2661,10 +2741,9 @@ function Atr_UpdateUI_SellPane (needsUpdate)
 
 		if (gJustPosted_ItemName ~= nil) then
 
-			Atr_Recommend_Text:SetText (string.format (ZT("Auction created for %s"), gJustPosted_ItemName));
-			MoneyFrame_Update ("Atr_RecommendPerStack_Price", gJustPosted_BuyoutPrice);
-			Atr_SetTextureButton ("Atr_RecommendItem_Tex", gJustPosted_StackSize, gJustPosted_ItemLink);
-
+			-- the recommend header used to get overwritten with "Auction created for X" here,
+			-- blowing away whatever it was already showing (and hiding the per-stack/per-item
+			-- lines with it) - leave it alone and just highlight the newly created auction below
 			gCurrentPane.currIndex = gCurrentPane.activeScan:FindInSortedData (gJustPosted_StackSize, gJustPosted_BuyoutPrice);
 
 			if (gCurrentPane:ShowCurrent()) then
@@ -2693,6 +2772,48 @@ end
 
 -----------------------------------------
 
+-- CalculateAuctionDeposit only knows about the stack currently sitting in the sell slot, which
+-- can differ from the stack size we're actually about to post once it's split, and rescaling its
+-- (already-floored) result for a different size loses a copper here and there since deposit
+-- isn't linear in stack size (there's a 5%-per-item surcharge for being short of a full stack).
+-- Compute the formula directly instead, floored exactly once, at the end - confirmed to match
+-- this server's native Auctions tab exactly.
+function Atr_CalcDeposit (itemLink, itemName, stackSize, duration)
+
+	local minutes = AtrNS.durationMinutes[duration] or 1440;
+
+	local _, _, _, _, _, _, _, maxStack, _, _, vendorPrice = Atr_GetItemInfo (itemLink or itemName);
+	vendorPrice	= vendorPrice or 0;
+	maxStack	= maxStack or stackSize;
+	local shortBy	= math.max (maxStack - stackSize, 0);
+
+	return math.floor (vendorPrice * stackSize * (minutes / 120) * (1 + shortBy * 0.05) * 0.025);
+end
+
+-----------------------------------------
+
+-- the auction house gives no way to ask an already-posted auction what its own deposit was, so
+-- track it ourselves, keyed the same way Atr_CancelAuction_ByIndex already matches a scanned
+-- "owner" row back to one of our own postings (name + per-stack buyout price + stack size)
+function Atr_DepositKey (itemName, buyoutPrice, stackSize)
+	return itemName.."_"..buyoutPrice.."_"..stackSize;
+end
+
+function Atr_RecordDeposit ()
+	if (gJustPosted_Deposit == nil) then
+		return;
+	end
+	AUCTIONATOR_DEPOSITS[Atr_DepositKey (gJustPosted_ItemName, gJustPosted_BuyoutPrice, gJustPosted_StackSize)] = gJustPosted_Deposit;
+end
+
+-- nil if we have no record of posting this particular auction ourselves (e.g. posted before this
+-- tracking existed, or via the default Blizzard UI)
+function Atr_GetRecordedDeposit (itemName, buyoutPrice, stackSize)
+	return AUCTIONATOR_DEPOSITS[Atr_DepositKey (itemName, buyoutPrice, stackSize)];
+end
+
+-----------------------------------------
+
 function Atr_SetDepositText()
 
 	local auctionItemName, auctionItemCount, auctionItemLink = Atr_GetSellItemInfo();
@@ -2700,20 +2821,9 @@ function Atr_SetDepositText()
 
 	if (auctionCount > 0) then
 		local duration = UIDropDownMenu_GetSelectedValue(Atr_Duration);
-		local minutes = AtrNS.durationMinutes[duration] or 1440;
 		local stackSize = Atr_StackSize();
 
-		-- CalculateAuctionDeposit only knows about the stack currently sitting in the sell slot,
-		-- which can differ from the stack size we're actually about to post once it's split, and
-		-- rescaling its (already-floored) result for a different size loses a copper here and
-		-- there since deposit isn't linear in stack size (there's a 5%-per-item surcharge for
-		-- being short of a full stack). Compute the formula directly instead, floored exactly
-		-- once, at the end - confirmed to match this server's native Auctions tab exactly.
-		local _, _, _, _, _, _, _, maxStack, _, _, vendorPrice = Atr_GetItemInfo (auctionItemLink or auctionItemName);
-		vendorPrice	= vendorPrice or 0;
-		maxStack	= maxStack or stackSize;
-		local shortBy	= math.max (maxStack - stackSize, 0);
-		local deposit	= math.floor (vendorPrice * stackSize * (minutes / 120) * (1 + shortBy * 0.05) * 0.025);
+		local deposit = Atr_CalcDeposit (auctionItemLink, auctionItemName, stackSize, duration);
 
 		local numAuctionString = "";
 		if (Atr_Batch_NumAuctions:GetNumber() > 1) then
@@ -3668,21 +3778,24 @@ end
 
 -----------------------------------------
 
-function Atr_LogCancelAuction(numCancelled, itemLink, stackSize)
+function Atr_LogCancelAuction(numCancelled, itemLink, stackSize, depositLost)
+
+	if (numCancelled < 1) then
+		return;
+	end
 
 	itemLink = Atr_BuildDisplayLink (itemLink) or itemLink;
 
-	local SSstring = "";
-	if (stackSize and stackSize > 1) then
-		SSstring = "|cff00ddddx"..stackSize;
+	local stackWord = (numCancelled == 1) and ZT("stack of") or ZT("stacks of");
+	local coloredCount = "|cff00dddd"..numCancelled.." "..stackWord.." "..(stackSize or 1).."x|r";
+
+	local depositString = "";
+	if (depositLost ~= nil) then
+		depositString = " - "..ZT("Deposit lost")..": "..zc.priceToString (depositLost);
 	end
 
-	if (numCancelled > 1) then
-		zc.msg_yellow (numCancelled..ZT(" auctions cancelled for ")..itemLink..SSstring);
-	elseif (numCancelled == 1) then
-		zc.msg_yellow (ZT("Auction cancelled for ")..itemLink..SSstring);
-	end
-	
+	zc.msg_yellow (string.format (ZT("Auctions cancelled for %s %s%s"), coloredCount, itemLink, depositString));
+
 end
 
 -----------------------------------------
@@ -3730,7 +3843,10 @@ function Atr_CancelAuction_ByIndex(index)
 		i = i + 1;
 	end
 
-	Atr_LogCancelAuction (numCancelled, itemLink, data.stackSize);
+	local deposit = Atr_GetRecordedDeposit (gCurrentPane.activeScan.itemName, data.buyoutPrice, data.stackSize);
+	local depositLost = deposit and (deposit * numCancelled) or nil;
+
+	Atr_LogCancelAuction (numCancelled, itemLink, data.stackSize, depositLost);
 
 end
 
