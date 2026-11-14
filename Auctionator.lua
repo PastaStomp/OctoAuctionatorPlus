@@ -950,14 +950,20 @@ end
 
 -----------------------------------------
 
-function Atr_MaxNumAuctions_OnClick ()
+-- the biggest number of stacks you could possibly set right now, given the current stack size
+function Atr_MaxPossibleNumAuctions ()
 
-	local maxAuctions = 0;
-	if (Atr_StackSize() > 0) then
-		maxAuctions = math.floor (gCurrentPane.totalItems / Atr_StackSize());
+	if (Atr_StackSize() <= 0) then
+		return 0;
 	end
 
-	Atr_Batch_NumAuctions:SetText (maxAuctions);
+	return math.floor ((gCurrentPane.totalItems or 0) / Atr_StackSize());
+end
+
+-----------------------------------------
+
+function Atr_MaxNumAuctions_OnClick ()
+	Atr_Batch_NumAuctions:SetText (Atr_MaxPossibleNumAuctions());
 end
 
 -----------------------------------------
@@ -2060,6 +2066,18 @@ end
 
 function Atr_StackSizeChangedFunc ()
 
+	-- clamp down if the player manually typed in more than is actually possible to post
+	local maxStackSize = Atr_MaxPossibleStackSize();
+	if (maxStackSize > 0 and Atr_StackSize() > maxStackSize) then
+		Atr_SetStackSize (maxStackSize);		-- re-triggers this handler with the clamped value
+		return;
+	end
+
+	local maxAuctions = Atr_MaxPossibleNumAuctions();
+	if (maxAuctions > 0 and Atr_Batch_NumAuctions:GetNumber() > maxAuctions) then
+		Atr_Batch_NumAuctions:SetText (maxAuctions);
+	end
+
 	local item_BuyoutPrice		= gSellItemPrice;
 	local new_Item_StartPrice   = Atr_CalcStartPrice (item_BuyoutPrice);
 
@@ -2081,6 +2099,13 @@ end
 -----------------------------------------
 
 function Atr_NumAuctionsChangedFunc (x)
+
+	-- clamp down if the player manually typed in more than is actually possible to post
+	local maxAuctions = Atr_MaxPossibleNumAuctions();
+	if (maxAuctions > 0 and Atr_Batch_NumAuctions:GetNumber() > maxAuctions) then
+		Atr_Batch_NumAuctions:SetText (maxAuctions);		-- re-triggers this handler with the clamped value
+		return;
+	end
 
 --	Atr_MemorizeButton:Show();
 
