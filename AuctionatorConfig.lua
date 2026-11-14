@@ -92,11 +92,10 @@ end
 
 function Atr_BasicOptionsFrame_Save()
 
-	local origValues = zc.msg_str (AUCTIONATOR_ENABLE_ALT, AUCTIONATOR_OPEN_ALL_BAGS, AUCTIONATOR_SHOW_ST_PRICE, AUCTIONATOR_DEFTAB, AUCTIONATOR_DEF_DURATION);
+	local origValues = zc.msg_str (AUCTIONATOR_ENABLE_ALT, AUCTIONATOR_OPEN_ALL_BAGS, AUCTIONATOR_DEFTAB, AUCTIONATOR_DEF_DURATION);
 
 	AUCTIONATOR_ENABLE_ALT		= zc.BoolToNum(AuctionatorOption_Enable_Alt_CB:GetChecked ());
 	AUCTIONATOR_OPEN_ALL_BAGS	= zc.BoolToNum(AuctionatorOption_Open_All_Bags_CB:GetChecked ());
-	AUCTIONATOR_SHOW_ST_PRICE	= zc.BoolToNum(AuctionatorOption_Show_StartingPrice_CB:GetChecked ());
 
 	AUCTIONATOR_DEFTAB			= UIDropDownMenu_GetSelectedValue(AuctionatorOption_Deftab);
 
@@ -108,13 +107,11 @@ function Atr_BasicOptionsFrame_Save()
 		if (Atr_RB_L:GetChecked())	then	AUCTIONATOR_DEF_DURATION = "L"; end;
 	end
 
-	local newValues = zc.msg_str (AUCTIONATOR_ENABLE_ALT, AUCTIONATOR_OPEN_ALL_BAGS, AUCTIONATOR_SHOW_ST_PRICE, AUCTIONATOR_DEFTAB, AUCTIONATOR_DEF_DURATION);
+	local newValues = zc.msg_str (AUCTIONATOR_ENABLE_ALT, AUCTIONATOR_OPEN_ALL_BAGS, AUCTIONATOR_DEFTAB, AUCTIONATOR_DEF_DURATION);
 
 	if (origValues ~= newValues) then
 		zc.msg_atr (ZT ("basic options saved"));
 	end
-	
-	Atr_ShowHide_StartingPrice();
 end
 
 
@@ -126,7 +123,6 @@ function Atr_SetupBasicOptionsFrame()
 
 	AuctionatorOption_Enable_Alt_CB:SetChecked			(zc.NumToBool(AUCTIONATOR_ENABLE_ALT));
 	AuctionatorOption_Open_All_Bags_CB:SetChecked		(zc.NumToBool(AUCTIONATOR_OPEN_ALL_BAGS));
-	AuctionatorOption_Show_StartingPrice_CB:SetChecked	(zc.NumToBool(AUCTIONATOR_SHOW_ST_PRICE));
 
 	UIDropDownMenu_Initialize		(AuctionatorOption_Deftab, AuctionatorOption_Deftab_Initialize);
 	UIDropDownMenu_SetSelectedValue	(AuctionatorOption_Deftab, AUCTIONATOR_DEFTAB);
@@ -273,28 +269,38 @@ function Atr_SetupUCConfigFrame()
 		MoneyInputFrame_SetCopper (getglobal("UC_"..amt.."_MoneyInput"), AUCTIONATOR_SAVEDVARS["_"..amt]);
 	end
 
-	Atr_Starting_Discount:SetText (AUCTIONATOR_SAVEDVARS.STARTING_DISCOUNT);
+	Atr_BiddingRatioSlider:SetValue (AUCTIONATOR_SAVEDVARS.BIDDING_RATIO);
+	Atr_BiddingRatioSlider_OnValueChanged ();
+	getglobal("Atr_BiddingRatioSliderLow"):SetText ("1c");
+	getglobal("Atr_BiddingRatioSliderHigh"):SetText ("Same as Buyout");
 
 end
 
+-----------------------------------------
+
+-- just refreshes the slider's own label as it's dragged; the chosen ratio isn't committed to
+-- AUCTIONATOR_SAVEDVARS until Save, same as every other value on this panel
+function Atr_BiddingRatioSlider_OnValueChanged ()
+	local ratio = math.floor (Atr_BiddingRatioSlider:GetValue() / 5 + 0.5) * 5;
+	Atr_BiddingRatioSliderText:SetText (ZT("Starting Price Ratio")..": "..ratio.."%");
+end
 
 -----------------------------------------
 
 function Atr_UCConfigFrame_Save()
 
-	local origValues	= AUCTIONATOR_SAVEDVARS.STARTING_DISCOUNT;
+	local origValues	= AUCTIONATOR_SAVEDVARS.BIDDING_RATIO;
+	local newValues		= math.floor (Atr_BiddingRatioSlider:GetValue() / 5 + 0.5) * 5;
 
-	AUCTIONATOR_SAVEDVARS.STARTING_DISCOUNT = Atr_Starting_Discount:GetNumber ();
-
-	local newValues		= AUCTIONATOR_SAVEDVARS.STARTING_DISCOUNT;
+	AUCTIONATOR_SAVEDVARS.BIDDING_RATIO = newValues;
 
 	for i = 1, getn(kThresh) do
 		local amt = kThresh[i].amt;
-	
+
 		origValues = origValues + AUCTIONATOR_SAVEDVARS["_"..amt];
-		
+
 		AUCTIONATOR_SAVEDVARS["_"..amt]	= MoneyInputFrame_GetCopper(getglobal("UC_"..amt.."_MoneyInput"));
-		
+
 		newValues = newValues + AUCTIONATOR_SAVEDVARS["_"..amt];
 	end
 

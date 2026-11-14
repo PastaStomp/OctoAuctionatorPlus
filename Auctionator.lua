@@ -15,9 +15,26 @@ gAtrZC = addonTable.zc;		-- share with AuctionatorDev
 
 local recommendElements			= {};
 
+-- the per-item buyout price - kept here so stack size changes can recompute the stack total
+-- without a separate field for it, and so the "per item" button has something to show
+local gSellItemPrice = 0;
+
+-- whether the Buyout Price input currently represents the per-item price instead of the whole
+-- stack's total; toggled by the "Price per item" checkbox
+local gBuyoutIsPerItem = false;
+
+-- Starting Price always needs to track whichever mode Buyout Price is currently in, the same
+-- way Buyout Price itself does, given a per-item starting price
+function Atr_ApplyStartingPrice (itemStartPrice)
+	if (gBuyoutIsPerItem) then
+		MoneyInputFrame_SetCopper (Atr_StartingPrice, itemStartPrice);
+	else
+		MoneyInputFrame_SetCopper (Atr_StartingPrice, itemStartPrice * Atr_StackSize());
+	end
+end
+
 AUCTIONATOR_ENABLE_ALT		= 1;
 AUCTIONATOR_OPEN_ALL_BAGS	= 1;
-AUCTIONATOR_SHOW_ST_PRICE	= 0;
 AUCTIONATOR_SHOW_TIPS		= 1;
 AUCTIONATOR_DEF_DURATION	= "N";		-- none
 AUCTIONATOR_V_TIPS			= 1;
@@ -49,7 +66,7 @@ local auctionator_savedvars_defaults =
 	["_10000"]				= 200;
 	["_2000"]				= 100;
 	["_500"]				= 5;
-	["STARTING_DISCOUNT"]	= 5;	-- PERCENT
+	["BIDDING_RATIO"]		= 95;	-- PERCENT of the buyout price the starting bid defaults to
 	};
 
 
@@ -678,29 +695,9 @@ function Atr_Init()
 		getglobal("AuctionatorHEntry"..n.."_UCOverlay"):SetTexture ("Interface\\Buttons\\WHITE8X8");
 	end
 
-	Atr_ShowHide_StartingPrice();
-	
 	Atr_LocalizeFrames();
 
 end
-
------------------------------------------
-
-function Atr_ShowHide_StartingPrice()
-
-	if (AUCTIONATOR_SHOW_ST_PRICE == 1) then
-		Atr_StartingPriceText:Show();
-		Atr_StartingPrice:Show();
-		Atr_StartingPriceDiscountText:Hide();
-		Atr_Duration_Text:SetPoint ("TOPLEFT", 10, -307);
-	else
-		Atr_StartingPriceText:Hide();
-		Atr_StartingPrice:Hide();
-		Atr_StartingPriceDiscountText:Show();
-		Atr_Duration_Text:SetPoint ("TOPLEFT", 10, -304);
-	end
-end
-
 
 -----------------------------------------
 
@@ -1090,14 +1087,22 @@ function Atr_CreateAuction_OnClick ()
 
 	gJustPosted_ItemName			= gCurrentPane.activeScan.itemName;
 	gJustPosted_ItemLink			= gCurrentPane.activeScan.itemLink;
-	gJustPosted_BuyoutPrice			= MoneyInputFrame_GetCopper(Atr_StackPrice);
 	gJustPosted_StackSize			= Atr_StackSize();
+
+	-- the Buyout Price field holds a per-item value while the "Price per item" checkbox is
+	-- checked instead of the whole stack's total - convert it before this goes anywhere that
+	-- expects a per-stack price (everything from here on, including the server)
+	local stackBuyoutPrice		= MoneyInputFrame_GetCopper(Atr_StackPrice);
+	if (gBuyoutIsPerItem) then
+		stackBuyoutPrice = stackBuyoutPrice * gJustPosted_StackSize;
+	end
+
+	gJustPosted_BuyoutPrice			= stackBuyoutPrice;
 	gJustPosted_NumInBagsAtStart	= Atr_GetNumItemInBags(gJustPosted_ItemName);
 	gJustPosted_NumStacks			= Atr_Batch_NumAuctions:GetNumber();
 
 	local duration				= UIDropDownMenu_GetSelectedValue(Atr_Duration);
-	local stackStartingPrice	= MoneyInputFrame_GetCopper(Atr_StartingPrice);
-	local stackBuyoutPrice		= MoneyInputFrame_GetCopper(Atr_StackPrice);
+	local stackStartingPrice	= math.max (MoneyInputFrame_GetCopper(Atr_StartingPrice), 1);		-- the auction house requires a starting price of at least 1c
 
 	if (gJustPosted_StackSize == 1 and gCurrentPane.fullStackSize > 1) then
 	
@@ -2004,9 +2009,14 @@ function Atr_UpdateRecommendation (updatePrices)
 	MoneyFrame_Update ("Atr_RecommendPerStack_Price", zc.round(new_Item_BuyoutPrice * Atr_StackSize()));
 
 	if (updatePrices) then
-		MoneyInputFrame_SetCopper (Atr_StackPrice,		new_Item_BuyoutPrice * Atr_StackSize());
-		MoneyInputFrame_SetCopper (Atr_StartingPrice, 	new_Item_StartPrice * Atr_StackSize());
-		MoneyInputFrame_SetCopper (Atr_ItemPrice,		new_Item_BuyoutPrice);
+		if (gBuyoutIsPerItem) then
+			MoneyInputFrame_SetCopper (Atr_StackPrice,	new_Item_BuyoutPrice);
+		else
+			MoneyInputFrame_SetCopper (Atr_StackPrice,	new_Item_BuyoutPrice * Atr_StackSize());
+		end
+		Atr_ApplyStartingPrice (new_Item_StartPrice);
+		gSellItemPrice = new_Item_BuyoutPrice;
+		Atr_UpdateItemPriceButton ();
 	end
 	
 	local cheapestStack = gCurrentPane.activeScan.bestPrices[Atr_StackSize()];
@@ -2031,36 +2041,18 @@ end
 
 function Atr_StackPriceChangedFunc ()
 
-	local new_Stack_BuyoutPrice = MoneyInputFrame_GetCopper (Atr_StackPrice);
-	local new_Item_BuyoutPrice  = math.floor (new_Stack_BuyoutPrice / Atr_StackSize());
-	local new_Item_StartPrice   = Atr_CalcStartPrice (new_Item_BuyoutPrice);
+	local enteredPrice = MoneyInputFrame_GetCopper (Atr_StackPrice);
 
-	local calculatedStackPrice = MoneyInputFrame_GetCopper(Atr_ItemPrice) * Atr_StackSize();
-
-	-- check to prevent looping
-	
-	if (calculatedStackPrice ~= new_Stack_BuyoutPrice) then
-		MoneyInputFrame_SetCopper (Atr_ItemPrice,		new_Item_BuyoutPrice);
-		MoneyInputFrame_SetCopper (Atr_StartingPrice,	new_Item_StartPrice * Atr_StackSize());
+	if (gBuyoutIsPerItem) then
+		gSellItemPrice = enteredPrice;
+	else
+		gSellItemPrice = math.floor (enteredPrice / Atr_StackSize());
 	end
-	
-end
 
------------------------------------------
+	local new_Item_StartPrice = Atr_CalcStartPrice (gSellItemPrice);
 
-function Atr_ItemPriceChangedFunc ()
-
-	local new_Item_BuyoutPrice = MoneyInputFrame_GetCopper (Atr_ItemPrice);
-	local new_Item_StartPrice  = Atr_CalcStartPrice (new_Item_BuyoutPrice);
-	
-	local calculatedItemPrice = math.floor (MoneyInputFrame_GetCopper (Atr_StackPrice) / Atr_StackSize());
-
-	-- check to prevent looping
-	
-	if (calculatedItemPrice ~= new_Item_BuyoutPrice) then
-		MoneyInputFrame_SetCopper (Atr_StackPrice, 		new_Item_BuyoutPrice * Atr_StackSize());
-		MoneyInputFrame_SetCopper (Atr_StartingPrice,	new_Item_StartPrice  * Atr_StackSize());
-	end
+	Atr_ApplyStartingPrice (new_Item_StartPrice);
+	Atr_UpdateItemPriceButton ();
 
 end
 
@@ -2068,11 +2060,17 @@ end
 
 function Atr_StackSizeChangedFunc ()
 
-	local item_BuyoutPrice		= MoneyInputFrame_GetCopper (Atr_ItemPrice);
+	local item_BuyoutPrice		= gSellItemPrice;
 	local new_Item_StartPrice   = Atr_CalcStartPrice (item_BuyoutPrice);
-	
-	MoneyInputFrame_SetCopper (Atr_StackPrice, 		item_BuyoutPrice * Atr_StackSize());
-	MoneyInputFrame_SetCopper (Atr_StartingPrice,	new_Item_StartPrice  * Atr_StackSize());
+
+	if (gBuyoutIsPerItem) then
+		MoneyInputFrame_SetCopper (Atr_StackPrice, item_BuyoutPrice);
+	else
+		MoneyInputFrame_SetCopper (Atr_StackPrice, item_BuyoutPrice * Atr_StackSize());
+	end
+	Atr_ApplyStartingPrice (new_Item_StartPrice);
+
+	Atr_UpdateItemPriceButton ();
 
 --	Atr_MemorizeButton:Show();
 
@@ -2385,6 +2383,61 @@ local gPrevSellItemLink;
 
 -----------------------------------------
 
+-- the "for N"/"for 1" suffix on both the Buyout Price and Starting Price labels, kept in sync
+-- with whichever the checkbox currently says (stack total vs. per item)
+function Atr_UpdatePriceLabels ()
+
+	local suffix = "";
+	if (gBuyoutIsPerItem) then
+		suffix = " |cff55ddfffor 1|r";
+	elseif (Atr_StackSize() > 1) then
+		suffix = " |cff55ddfffor "..Atr_StackSize().."|r";
+	end
+
+	Atr_StackPriceText:SetText (ZT("Buyout Price")..suffix);
+	Atr_StartingPriceText:SetText (ZT("Starting Price (Bids)")..suffix);
+
+end
+
+-----------------------------------------
+
+function Atr_UpdateItemPriceButton ()
+
+	Atr_UpdatePriceLabels ();
+
+	if (Atr_StackSize() <= 1) then
+		Atr_PricePerItemCheck:Hide();
+		return;
+	end
+
+	Atr_PricePerItemCheck:SetChecked (gBuyoutIsPerItem);
+	Atr_PricePerItemCheck:Show();
+
+end
+
+-----------------------------------------
+
+-- toggles whether the Buyout Price field is read/written as the per-item price or the whole
+-- stack's total, converting the currently displayed value (and both labels) to match
+function Atr_PricePerItemCheck_OnClick ()
+
+	gBuyoutIsPerItem = Atr_PricePerItemCheck:GetChecked() and true or false;
+
+	local itemStartPrice = Atr_CalcStartPrice (gSellItemPrice);
+
+	if (gBuyoutIsPerItem) then
+		MoneyInputFrame_SetCopper (Atr_StackPrice, gSellItemPrice);
+	else
+		MoneyInputFrame_SetCopper (Atr_StackPrice, gSellItemPrice * Atr_StackSize());
+	end
+	Atr_ApplyStartingPrice (itemStartPrice);
+
+	Atr_UpdateItemPriceButton ();
+
+end
+
+-----------------------------------------
+
 function Atr_OnNewAuctionUpdate()
 	
 	if (not gAtr_ClickAuctionSell) then
@@ -2401,7 +2454,8 @@ function Atr_OnNewAuctionUpdate()
 	if (gPrevSellItemLink ~= auctionLink) then
 
 		gPrevSellItemLink = auctionLink;
-		
+		gBuyoutIsPerItem = false;
+
 		if (auctionLink) then
 			gJustPosted_ItemName = nil;
 			Atr_AddToItemLinkCache (auctionItemName, auctionLink);
@@ -2553,12 +2607,9 @@ function Atr_UpdateUI_SellPane (needsUpdate)
 
 			if (Atr_Batch_Stacksize.oldStackSize ~= Atr_StackSize()) then
 				Atr_Batch_Stacksize.oldStackSize = Atr_StackSize();
-				local itemPrice = MoneyInputFrame_GetCopper(Atr_ItemPrice);
-				MoneyInputFrame_SetCopper (Atr_StackPrice,  itemPrice * Atr_StackSize());
+				MoneyInputFrame_SetCopper (Atr_StackPrice,  gSellItemPrice * Atr_StackSize());
 			end
 
-			Atr_StartingPriceDiscountText:SetText (ZT("Starting Price Discount")..":  "..AUCTIONATOR_SAVEDVARS.STARTING_DISCOUNT.."%");
-			
 			if (Atr_Batch_NumAuctions:GetNumber() < 2) then
 				Atr_Batch_Stacksize_Text:SetText (ZT("stack of"));
 				Atr_CreateAuctionButton:SetText (ZT("Create Auction"));
@@ -2567,16 +2618,7 @@ function Atr_UpdateUI_SellPane (needsUpdate)
 				Atr_CreateAuctionButton:SetText (string.format (ZT("Create %d Auctions"), Atr_Batch_NumAuctions:GetNumber()));
 			end
 
-			if (Atr_StackSize() > 1) then
-				Atr_StackPriceText:SetText (ZT("Buyout Price").." |cff55ddffx"..Atr_StackSize().."|r");
-				Atr_ItemPriceText:SetText (ZT("Per Item"));
-				Atr_ItemPriceText:Show();
-				Atr_ItemPrice:Show();
-			else
-				Atr_StackPriceText:SetText (ZT("Buyout Price"));
-				Atr_ItemPriceText:Hide();
-				Atr_ItemPrice:Hide();
-			end
+			Atr_UpdateItemPriceButton ();
 
 			Atr_SetTextureButton ("Atr_SellControls_Tex", Atr_StackSize(), Atr_GetItemLink(auctionItemName));
 
@@ -4460,15 +4502,13 @@ end
 
 function Atr_CalcStartPrice (buyoutPrice)
 
-	local discount = 1.00 - (AUCTIONATOR_SAVEDVARS.STARTING_DISCOUNT / 100);
+	local ratio = AUCTIONATOR_SAVEDVARS.BIDDING_RATIO / 100;
 
-	local newStartPrice = Atr_CalcUndercutPrice(math.floor(buyoutPrice * discount));
-	
-	if (AUCTIONATOR_SAVEDVARS.STARTING_DISCOUNT == 0) then		-- zero means zero
-		newStartPrice = buyoutPrice;
+	if (ratio >= 1) then		-- 100% means the starting bid equals the buyout price exactly
+		return math.max (buyoutPrice, 1);
 	end
-	
-	return newStartPrice;
+
+	return math.max (Atr_CalcUndercutPrice (math.floor (buyoutPrice * ratio)), 1);		-- the auction house requires a starting price of at least 1c
 
 end
 
