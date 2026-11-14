@@ -291,7 +291,6 @@ AtrNS.durationText = { "6 hours", "24 hours", "72 hours" }
 
 local post = nil
 local driver = CreateFrame("Frame", "AtrCompatDriver")
-local acc = 0
 
 -- all bag slots holding `id`, plus one empty slot to split into. Splitting a bigger stack
 -- straight into the auction sell slot does not carry the split amount through on this server
@@ -418,9 +417,17 @@ local function Step()
 			end
 		end
 
-		-- a stack of exactly the right size already exists: straight into the sell slot
+		-- a stack of exactly the right size already exists: straight into the sell slot. Re-check
+		-- this exact slot fresh right before acting - CollectStacks's scan can be a frame stale
+		-- against a bag slot the previous post just vacated, and acting on that stale read is
+		-- what caused "Item was not found"; if it's changed, just retry next frame instead of
+		-- guessing how long to wait
 		for _, st in ipairs(list) do
 			if st.count == p.size then
+				local _, freshCount, freshLocked = GetContainerItemInfo(st.bag, st.slot)
+				if freshLocked or freshCount ~= p.size then
+					return
+				end
 				PickupContainerItem(st.bag, st.slot)
 				ClickAuctionSellItemButton()
 				p.state = "placing"
@@ -435,6 +442,10 @@ local function Step()
 			if st.count > p.size then
 				if not empty then
 					Finish("Need an empty bag slot to split stacks (" .. p.done .. " of " .. p.n .. " posted).")
+					return
+				end
+				local _, freshCount, freshLocked = GetContainerItemInfo(st.bag, st.slot)
+				if freshLocked or (freshCount or 0) < p.size then
 					return
 				end
 				SplitContainerItem(st.bag, st.slot, p.size)
@@ -463,10 +474,15 @@ local function Step()
 		end
 		StartAuction(p.bid, p.buyout, p.minutes)
 		p.state = "posting"
+		p.auctionConfirmed = false
 		p.t = now
 	elseif p.state == "posting" then
-		local name = GetAuctionSellItemInfo()
-		if (not name) and now - p.t > 0.3 then
+		-- confirmed ONLY by the server actually saying so (same signal the chat-spam suppressor in
+		-- Auctionator.lua already watches for). The sell slot clearing is NOT a safe stand-in for
+		-- this - the client resets that UI optimistically the instant StartAuction is called,
+		-- before the server has had any chance to accept or reject it, so a slot-empty check
+		-- reports "confirmed" even when the post was silently rejected server-side.
+		if p.auctionConfirmed then
 			p.done = p.done + 1
 			if p.multi and G.Atr_OnAuctionMultiSellUpdate then
 				local sv1, sv2 = G.arg1, G.arg2
@@ -482,10 +498,10 @@ local function Step()
 				p.refillOnly = true
 				p.pendingBag, p.pendingSlot = nil, nil
 				p.state = "prep"
-				p.t = now + 0.3
+				p.t = now
 			else
 				p.state = "prep"
-				p.t = now + 0.3
+				p.t = now
 			end
 		elseif now - p.t > 6 then
 			Finish("The server did not confirm the auction (" .. p.done .. " of " .. p.n .. " posted).")
@@ -493,11 +509,12 @@ local function Step()
 	end
 end
 
+-- runs every frame, same as the reference addon this was benchmarked against - the 0.1s
+-- throttle this used to have, plus fixed grace periods sprinkled through Step() itself, were
+-- adding real, noticeable delay per auction for no safety benefit over just polling state as
+-- fast as the game already ticks
 driver:SetScript("OnUpdate", function()
 	if not post then return end
-	acc = acc + arg1
-	if acc < 0.1 then return end
-	acc = 0
 	Step()
 end)
 
@@ -506,10 +523,15 @@ end)
 -- can fire one mid-sequence and would wrongly cancel a posting run that wasn't actually broken.
 -- Genuine stalls are still caught by the per-state timeouts below (3s placing, 6s posting).
 driver:RegisterEvent("AUCTION_HOUSE_CLOSED")
+driver:RegisterEvent("CHAT_MSG_SYSTEM")
 driver:SetScript("OnEvent", function()
 	if not post then return end
 	if event == "AUCTION_HOUSE_CLOSED" then
 		post = nil
+	elseif event == "CHAT_MSG_SYSTEM" then
+		if arg1 == ERR_AUCTION_STARTED and post.state == "posting" then
+			post.auctionConfirmed = true
+		end
 	end
 end)
 
