@@ -441,17 +441,18 @@ function Atr_InitScanDB()
 		return;
 	end
 
-	local realm_Faction = GetRealmName().."_"..faction;
+	local realmKey = GetRealmName();
+	local oldRealmFactionKey = realmKey.."_"..faction;		-- the per-faction key this used to be stored under
 
 	if (AUCTIONATOR_PRICE_DATABASE and AUCTIONATOR_PRICE_DATABASE["__dbversion"] == nil) then	-- see if we need to migrate
-	
+
 		local temp = zc.CopyDeep (AUCTIONATOR_PRICE_DATABASE);
-		
+
 		AUCTIONATOR_PRICE_DATABASE = {};
 		AUCTIONATOR_PRICE_DATABASE["__dbversion"] = 2;
-	
-		AUCTIONATOR_PRICE_DATABASE[realm_Faction] = zc.CopyDeep (temp);
-		
+
+		AUCTIONATOR_PRICE_DATABASE[oldRealmFactionKey] = zc.CopyDeep (temp);
+
 		temp = {};
 	end
 
@@ -459,14 +460,38 @@ function Atr_InitScanDB()
 		AUCTIONATOR_PRICE_DATABASE = {};
 		AUCTIONATOR_PRICE_DATABASE["__dbversion"] = 2;
 	end
-	
-	if (AUCTIONATOR_PRICE_DATABASE[realm_Faction] == nil) then
-		AUCTIONATOR_PRICE_DATABASE[realm_Faction] = {};
+
+	-- this server runs one neutral auction house shared by both factions, not two separate
+	-- ones - merge any old per-faction split into a single realm-wide database so characters of
+	-- different factions on the same realm actually share scan data
+	if (AUCTIONATOR_PRICE_DATABASE["__dbversion"] < 3) then
+
+		AUCTIONATOR_PRICE_DATABASE["__dbversion"] = 3;
+
+		if (AUCTIONATOR_PRICE_DATABASE[realmKey] == nil) then
+			AUCTIONATOR_PRICE_DATABASE[realmKey] = {};
+		end
+
+		local i, otherFaction;
+		for i, otherFaction in ipairs ({"Alliance", "Horde"}) do
+			local oldKey = realmKey.."_"..otherFaction;
+			if (AUCTIONATOR_PRICE_DATABASE[oldKey]) then
+				local a, v;
+				for a, v in pairs (AUCTIONATOR_PRICE_DATABASE[oldKey]) do
+					AUCTIONATOR_PRICE_DATABASE[realmKey][a] = v;
+				end
+				AUCTIONATOR_PRICE_DATABASE[oldKey] = nil;
+			end
+		end
 	end
 
-	local db = AUCTIONATOR_PRICE_DATABASE[realm_Faction];
+	if (AUCTIONATOR_PRICE_DATABASE[realmKey] == nil) then
+		AUCTIONATOR_PRICE_DATABASE[realmKey] = {};
+	end
 
-	if (gAtr_ScanDB_Pending and gAtr_ScanDB and gAtr_ScanDB ~= db) then	-- keep prices learned before the faction was known
+	local db = AUCTIONATOR_PRICE_DATABASE[realmKey];
+
+	if (gAtr_ScanDB_Pending and gAtr_ScanDB and gAtr_ScanDB ~= db) then	-- keep prices learned before the realm was known
 		for a,v in pairs (gAtr_ScanDB) do
 			db[a] = v;
 		end
