@@ -859,7 +859,16 @@ function Atr_AuctionFrameTab_OnClick (index)
 
 
 		if (index == Atr_FindTabIndex(MORE_TAB)) then
-			FauxScrollFrame_SetOffset (Atr_Hlist_ScrollFrame, gCurrentPane.hlistScrollOffset);
+			-- always start at the top rather than restoring a remembered offset: the Listings and
+			-- Buy tabs now use different row heights but share this one scrollbar widget, so an
+			-- offset recorded under one row height lands the scrollbar at the wrong pixel position
+			-- under the other, leaving it visually stuck at the top while the list itself is
+			-- actually scrolled (and, with ≤10 rows and no scrollbar shown, stuck there for good)
+			gCurrentPane.hlistScrollOffset = 0;
+			FauxScrollFrame_SetOffset (Atr_Hlist_ScrollFrame, 0);
+			if (Atr_Hlist_ScrollFrameScrollBar) then
+				Atr_Hlist_ScrollFrameScrollBar:SetValue (0);	-- FauxScrollFrame_SetOffset alone doesn't visually snap the slider back to the top
+			end
 			Atr_DisplayHlist();
 			Atr_DropDown1:Show();
 			
@@ -870,6 +879,14 @@ function Atr_AuctionFrameTab_OnClick (index)
 		
 		
 		if (index == Atr_FindTabIndex(BUY_TAB)) then
+			-- same reset as the Listings tab above, and for the same reason: this scrollbar is
+			-- shared across tabs that use different row heights, so a position left over from
+			-- another tab lands at the wrong pixel offset here
+			gCurrentPane.hlistScrollOffset = 0;
+			FauxScrollFrame_SetOffset (Atr_Hlist_ScrollFrame, 0);
+			if (Atr_Hlist_ScrollFrameScrollBar) then
+				Atr_Hlist_ScrollFrameScrollBar:SetValue (0);
+			end
 			Atr_Search_Box:Show();
 			Atr_Search_Button:Show();
 			AuctionFrameMoneyFrame:Show();
