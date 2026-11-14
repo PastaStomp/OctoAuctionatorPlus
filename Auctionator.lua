@@ -1238,9 +1238,15 @@ end
 
 function Atr_ResetDuration()
 
-	if (AUCTIONATOR_DEF_DURATION == "S") then UIDropDownMenu_SetSelectedValue(Atr_Duration, 1); end;
-	if (AUCTIONATOR_DEF_DURATION == "M") then UIDropDownMenu_SetSelectedValue(Atr_Duration, 2); end;
-	if (AUCTIONATOR_DEF_DURATION == "L") then UIDropDownMenu_SetSelectedValue(Atr_Duration, 3); end;
+	-- Duration isn't the only dropdown in this addon (or in the game), and they all share one
+	-- global pop-up button pool - SetSelectedValue matches against whichever dropdown's list was
+	-- populated into it most recently. Re-Initialize right before selecting so it's always
+	-- Duration's own list being matched against, not some other dropdown's stale leftovers
+	-- (confirmed bug: seen displaying "Uncommon" - a scan-quality dropdown entry that happens to
+	-- share value 3 with Duration's own "72 hours").
+	if (AUCTIONATOR_DEF_DURATION == "S") then UIDropDownMenu_Initialize (Atr_Duration, Atr_Duration_Initialize); UIDropDownMenu_SetSelectedValue(Atr_Duration, 1); end;
+	if (AUCTIONATOR_DEF_DURATION == "M") then UIDropDownMenu_Initialize (Atr_Duration, Atr_Duration_Initialize); UIDropDownMenu_SetSelectedValue(Atr_Duration, 2); end;
+	if (AUCTIONATOR_DEF_DURATION == "L") then UIDropDownMenu_Initialize (Atr_Duration, Atr_Duration_Initialize); UIDropDownMenu_SetSelectedValue(Atr_Duration, 3); end;
 
 end
 
