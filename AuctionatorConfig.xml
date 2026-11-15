@@ -532,43 +532,4 @@
 
 
 
-  <!-- The About screen --> 
-
-
-	<Frame name="AuctionatorDescriptionFrame" inherits="Atr_OptionsPanelTemplate" parent="UIParent" enableMouse="true" hidden="true">
-
-		<Scripts>
-			<OnLoad>
-				Atr_LoadOptionsSubPanel (this, ZT("About"), ZT("About Auctionator"));
-			</OnLoad>
-		</Scripts>
-
-		<Layers>
-			<Layer level="BACKGROUND">
-				<FontString text="Author:  Zirco" inherits="GameFontDisableSmall" justifyH="LEFT" justifyV="TOP">
-					<Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="30" y="35"/></Offset></Anchor></Anchors>
-				</FontString>
-				<FontString name="AuctionatorVersionText" inherits="GameFontDisableSmall" justifyH="LEFT" justifyV="TOP">
-					<Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="30" y="20"/></Offset></Anchor></Anchors>
-				</FontString>
-			</Layer>
-		</Layers>
-
-		<Frames>
-
-			<SimpleHTML name="AuctionatorDescriptionHTML">
-				<Size><AbsDimension x="320" y="120" /></Size>		
-				<Anchors>
-					<Anchor point="TOPLEFT"><Offset><AbsDimension x="20" y="-70"/></Offset></Anchor>
-				</Anchors>
-				<FontString inherits="GameFontHighlightSmall"/>
-				<FontStringHeader1 inherits="GameFontNormal"/>
-			</SimpleHTML>
-
-
-		</Frames>
-	</Frame>
-
-
-
 </Ui>

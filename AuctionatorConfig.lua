@@ -49,30 +49,6 @@ function Atr_InitOptionsPanels()
 	Atr_SetupTooltipsOptionsFrame();
 	Atr_SetupUCConfigFrame();
 	Atr_SetupStackingFrame();
-	Atr_SetupOptionsFrame();
-
-end
-
------------------------------------------
-
-function Atr_SetupOptionsFrame()
-
-	local expText = "<html><body>"
-					.."<p>"..ZT("The latest information on Auctionator can be found at").." auctionator-addon.com.".."</p>"
-					.."<p><br/>"
-					.."|cffaaaaaa"..string.format (ZT("German translation courtesy of %s"),  "|rCkaotik").."<br/>"
-					.."|cffaaaaaa"..string.format (ZT("Russian translation courtesy of %s"), "|rStingerSoft").."<br/>"
-					.."|cffaaaaaa"..string.format (ZT("Swedish translation courtesy of %s"), "|rHellManiac").."<br/>"
-					.."|cffaaaaaa"..string.format (ZT("French translation courtesy of %s"),  "|rKiskewl").."<br/>"
-					.."|cffaaaaaa"..string.format (ZT("Spanish translation courtesy of %s"),  "|rElfindor").."<br/>"
-					.."</p>"
-					.."</body></html>"
-					;
-
-	AuctionatorDescriptionHTML:SetText (expText);
-	AuctionatorDescriptionHTML:SetSpacing (3);
-
-	AuctionatorVersionText:SetText (ZT("Version")..": "..AuctionatorVersion);
 
 end
 
