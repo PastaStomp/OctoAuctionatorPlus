@@ -2415,7 +2415,13 @@ function Atr_OnUpdate(self, elapsed)
 	if (gAtr_dustCacheIndex > 0 and zc.periodic (self, "dust_lastUpdate", 0.1, elapsed)) then
 		Atr_GetNextDustIntoCache();
 	end
-	
+
+	-- the full-pane drop zone only intercepts the mouse while something's actually being dragged,
+	-- so it never blocks the normal buttons/inputs it overlaps the rest of the time
+	if (Atr_SellDropZone) then
+		Atr_SellDropZone:EnableMouse (CursorHasItem() and true or false);
+	end
+
 	-- the core Idle routine
 
 	if (zc.periodic (self, "idle_lastUpdate", 0.2, elapsed)) then
@@ -2778,7 +2784,7 @@ function Atr_UpdateUI_SellPane (needsUpdate)
 			end
 		
 		elseif (gCurrentPane:IsScanEmpty()) then
-			Atr_SetMessage (ZT("Drag an item you want to sell to this area."));
+			Atr_SetMessage (ZT("Drag items onto this window to sell them."));
 		end
 	end
 
