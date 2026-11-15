@@ -2555,6 +2555,18 @@ function Atr_OnNewAuctionUpdate()
 	-- confirmed (via direct event logging) that NEW_AUCTION_UPDATE fires reliably for a
 	-- right-click placement too, same as a drag, with arg1 set to the mouse button used. The
 	-- itemLink comparison below already detects a genuine change on its own; no flag needed.
+	--
+	-- Compat.lua's multi-stack posting driver splits/repicks/redrops the item into the sell slot
+	-- between stacks, which fires this same event and can toggle the sell slot's link to nil and
+	-- back even though it's still the same item being posted. Reacting to that as if a player had
+	-- placed a genuinely new item wiped gJustPosted_ItemName mid-batch (nilling it out right
+	-- before the final stack's completion handler needed it), crashing with "table index is nil"
+	-- in Atr_AddHistoricalPrice. None of this function's reactions are meaningful while our own
+	-- posting is driving the slot, so skip all of it until posting settles.
+	if (Atr_PostingInProgress()) then
+		return;
+	end
+
 	local auctionItemName, auctionCount, auctionLink = Atr_GetSellItemInfo();
 
 	-- a right-click (or the vanilla "Auctions" tab's own sell slot) can place an item here without
