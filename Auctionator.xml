@@ -332,8 +332,12 @@
 					<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="77" y="-98"/></Offset></Anchor></Anchors>
 				</FontString>
 
-				<FontString name="Atr_Recommend_Basis_Text" inherits="GameFontHighlightSmall" text="based on" hidden="true">
-					<Anchors><Anchor point="LEFT" relativePoint="RIGHT" relativeTo="Atr_Recommend_Text"><Offset><AbsDimension x="20" y="-2"/></Offset></Anchor></Anchors>
+				<!-- "Scanning auctions: page X / Y" - shown at a fixed spot in the top-right while a
+				     search is in progress, instead of taking over AuctionatorMessage2Frame (which
+				     used to hide the whole recommend header while scanning) -->
+				<FontString name="Atr_ScanProgress_Text" inherits="GameFontNormalSmall" text="" hidden="true" justifyH="RIGHT">
+					<Anchors><Anchor point="TOPRIGHT"><Offset><AbsDimension x="-20" y="-96"/></Offset></Anchor></Anchors>
+					<Color r="1.0" g="1.0" b="1.0"/>
 				</FontString>
 
 				<FontString name="Atr_RecommendPerStack_Text" inherits="GameFontHighlightSmall" text="per stack">

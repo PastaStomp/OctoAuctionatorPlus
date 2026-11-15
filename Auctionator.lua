@@ -1655,14 +1655,16 @@ function Atr_ShowItemNameAndTexture(itemName)
 
 	local scn = gCurrentPane.activeScan;
 
-	local color = "";
 	if (scn and not scn:IsNil()) then
-		color = "|cff"..zc.RGBtoHEX (scn.itemTextColor[1], scn.itemTextColor[2], scn.itemTextColor[3]);
-		itemName = scn.itemName;
+		local color = "|cff"..zc.RGBtoHEX (scn.itemTextColor[1], scn.itemTextColor[2], scn.itemTextColor[3]);
+		Atr_Recommend_Text:SetText (color..scn.itemName);
+	elseif (Atr_IsModeBuy() and itemName and itemName ~= "") then
+		Atr_Recommend_Text:SetText (string.format (ZT("Searching for: \"%s\""), itemName));
+	else
+		Atr_Recommend_Text:SetText ("");
 	end
 
 	Atr_Recommend_Text:Show ();
-	Atr_Recommend_Text:SetText (color..itemName);
 
 	Atr_SetTextureButton ("Atr_RecommendItem_Tex", 1, gCurrentPane.activeScan.itemLink);
 end
@@ -1967,7 +1969,11 @@ function Atr_UpdateRecommendation (updatePrices)
 	
 	elseif (Atr_ShowingCurrentAuctions()) then
 
-		if (gCurrentPane:GetProcessingState() ~= KM_NULL_STATE) then
+		-- while a multi-page scan is still running, sortedData/numMatches can be mid-rebuild, so
+		-- skip showing anything new based on them - but if a row's already selected, its basedata
+		-- is already known-good and shouldn't keep getting hidden just because the broader scan
+		-- (for other items) hasn't finished yet
+		if (gCurrentPane:GetProcessingState() ~= KM_NULL_STATE and not gCurrentPane.currIndex) then
 			return;
 		end
 
@@ -2711,7 +2717,10 @@ function Atr_UpdateUI ()
 		end
 
 		if (gCurrentPane.activeSearch and gCurrentPane.activeSearch:IsActive()) then
-			Atr_SetMessage (Atr_SearchProgressText ());
+			Atr_ScanProgress_Text:SetText (Atr_SearchProgressText ());
+			Atr_ScanProgress_Text:Show ();
+		else
+			Atr_ScanProgress_Text:Hide ();
 		end
 
 		

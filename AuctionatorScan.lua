@@ -306,7 +306,8 @@ function AtrSearch:AnalyzeResultsPage()
 	end
 
 	if (totalAuctions >= 50) then
-		Atr_SetMessage (string.format (ZT("Scanning auctions: page %d"), self.current_page).." / "..self.totalPages);
+		Atr_ScanProgress_Text:SetText (string.format (ZT("Scanning auctions: page %d"), self.current_page).." / "..self.totalPages);
+		Atr_ScanProgress_Text:Show ();
 	end
 
 	-- analyze
