@@ -583,7 +583,11 @@ function zc.msg_ex (options, ...)
 		else									m = v;
 		end
 
-		msg = msg.." "..m;
+		if (i == 1) then
+			msg = m;
+		else
+			msg = msg.." "..m;
+		end
 
 	end
 
