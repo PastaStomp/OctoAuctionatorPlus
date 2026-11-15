@@ -2,7 +2,7 @@
 -- The panels themselves (AuctionatorConfig.xml) are reused; this file hosts them in one standalone window.
 
 local TAB_ORDER = { "Atr_BasicOptionsFrame", "Atr_TooltipsOptionsFrame", "Atr_UCConfigFrame",
-	"Atr_StackingOptionsFrame", "Atr_ScanningOptionsFrame", "AuctionatorDescriptionFrame" }
+	"Atr_StackingOptionsFrame", "AuctionatorDescriptionFrame" }
 
 local tabButtons = {}
 local selected = 1
@@ -75,7 +75,7 @@ local function Build()
 	title:SetPoint("TOP", f, "TOP", 0, -18)
 	title:SetText("OctoAuctionator Options")
 
-	local labels = { "Basic", "Tooltips", "Undercut", "Selling", "Scanning", "About" }
+	local labels = { "Basic", "Tooltips", "Undercut", "Selling", "About" }
 	local x = 20
 	for i = 1, getn(TAB_ORDER) do
 		local b = CreateFrame("Button", "Atr_OptionsTab" .. i, f, "UIPanelButtonTemplate")

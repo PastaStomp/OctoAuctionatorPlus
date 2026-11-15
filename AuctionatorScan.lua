@@ -1050,6 +1050,27 @@ local gFS_sentAt		= 0;
 
 -----------------------------------------
 
+-- UIDropDownMenu_DisableDropDown/EnableDropDown aren't defined on this client - do what they'd
+-- do ourselves instead of depending on them
+local function Atr_SetDropDownEnabled (dropdown, enabled)
+
+	local name = dropdown:GetName();
+	local text = getglobal (name.."Text");
+	local button = getglobal (name.."Button");
+
+	if (enabled) then
+		if (text)	then text:SetTextColor (1, 1, 1); end
+		if (button)	then button:Enable(); end
+		dropdown.isDisabled = nil;
+	else
+		if (text)	then text:SetTextColor (0.5, 0.5, 0.5); end
+		if (button)	then button:Disable(); end
+		dropdown.isDisabled = 1;
+	end
+end
+
+-----------------------------------------
+
 function Atr_FullScanStart()
 
 	if (gAtr_FullScanState == ATR_FS_STARTED) then
@@ -1058,6 +1079,7 @@ function Atr_FullScanStart()
 
 	Atr_FullScanStatus:SetText (ZT("Scanning").."...");
 	Atr_FullScanStartButton:Disable();
+	Atr_SetDropDownEnabled (Atr_scanLevelDD, false);
 
 	gAtr_FullScanState = ATR_FS_STARTED;
 
@@ -1087,6 +1109,7 @@ function Atr_FullScanAbort()
 
 	Atr_FullScanStatus:SetText (ZT("Scan stopped"));
 	Atr_FullScanStartButton:Enable();
+	Atr_SetDropDownEnabled (Atr_scanLevelDD, true);
 
 end
 
@@ -1273,6 +1296,7 @@ function Atr_FullScanFinish()
 
 	Atr_FullScanStartButton:Enable();
 	Atr_FullScanDone:Enable();
+	Atr_SetDropDownEnabled (Atr_scanLevelDD, true);
 	Atr_FullScanStatus:SetText (ZT("Scan complete"));
 
 	Atr_FSR_scanned_count:SetText	(numBatchAuctions);
@@ -1306,6 +1330,20 @@ end
 
 -----------------------------------------
 
+-- keeps Atr_FullScanLinkBox effectively read-only: any attempted edit snaps straight back to the
+-- URL and re-highlights it, while Ctrl+A/Ctrl+C (which don't fire OnTextChanged) still work fine
+function Atr_FullScanLinkBox_OnTextChanged ()
+
+	local url = "https://github.com/brues-code/AuctionQueryThrottle";
+
+	if (this:GetText() ~= url) then
+		this:SetText (url);
+		this:HighlightText ();
+	end
+end
+
+-----------------------------------------
+
 function Atr_ShowFullScanFrame()
 
 	Atr_FullScanHTML:Show();
@@ -1317,10 +1355,11 @@ function Atr_ShowFullScanFrame()
 	Atr_UpdateFullScanFrame();
 	Atr_FullScanStatus:SetText ("");
 
+	UIDropDownMenu_Initialize (Atr_scanLevelDD, Atr_scanLevelDD_Initialize);
+	UIDropDownMenu_SetSelectedValue (Atr_scanLevelDD, AUCTIONATOR_SCAN_MINLEVEL);
+
 	local expText = "<html><body>"
 					.."<p>"
-					..ZT("Scanning is entirely optional.")
-					.."<br/><br/>"
 					..ZT("SCAN_EXPLANATION")
 					.."</p>"
 					.."</body></html>"
@@ -1348,6 +1387,9 @@ function Atr_UpdateFullScanFrame()
 
 	if (gAtr_FullScanState ~= ATR_FS_STARTED) then
 		Atr_FullScanStartButton:Enable();
+		Atr_SetDropDownEnabled (Atr_scanLevelDD, true);
+	else
+		Atr_SetDropDownEnabled (Atr_scanLevelDD, false);
 	end
 end
 
@@ -1369,7 +1411,10 @@ function Atr_FullScanFrameIdle()
 		if (not gFS_waiting and Atr_CanSendAuctionQuery()) then
 			gFS_waiting = true;
 			gFS_sentAt = GetTime();
-			Atr_QueryAuctionItems ("", nil, nil, 0, 0, 0, gFS_page, 0, 0);
+			-- AUCTIONATOR_SCAN_MINLEVEL is 1-based (1 = Poor/all); the native quality filter is
+			-- 0-based and treated as a minimum (0 itself means "no filter" either way, so Poor/all
+			-- still fetches everything) - passing it server-side actually shrinks the page count
+			Atr_QueryAuctionItems ("", nil, nil, 0, 0, 0, gFS_page, 0, (AUCTIONATOR_SCAN_MINLEVEL or 1) - 1);
 		end
 	end
 

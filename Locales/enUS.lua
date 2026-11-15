@@ -2,14 +2,17 @@ function AtrBuildLTable_enUS ()
 
 AtrL = {};
 
-AtrL["SCAN_EXPLANATION"] = "Scanning the auction house builds a database of prices that Auctionator uses for two purposes: to display in item tooltips "
-							.."when you're away from the Auction House and to recommend a price when you're posting an item for which there are no other "
-							.."auctions at that moment."
+AtrL["SCAN_EXPLANATION"] = "Scanning is entirely optional. It builds a local price database, used for item tooltip prices and buyout recommendations "
+							.."when nothing else is currently listed."
 							.."<br/><br/>"
-							.."Scanning usually takes about 10 seconds but takes much longer the first time after a Warcraft patch.  "
-							.."Note that Blizzard only allows scanning once every 15 minutes."
+							.."It can take a while depending on market size and the quality filter above."
 							.."<br/><br/>"
-							.."Finally, a warning: if you have a low-bandwidth connection, scanning may cause you to disconnect.";
+							.."|cffffffffRecommended mod:|r"
+							.."<br/>"
+							.."Install the mod '|cff00ddddAuctionQueryThrottle|r' to vastly increase scanning speed."
+							.."<br/>"
+							.."Auction House browsing on 1.12.1 is slow since the client waits 5 "
+							.."seconds between requests - this mod fixes that. Loaded via VanillaFixes by adding it to your dlls.txt.";
 
 
 

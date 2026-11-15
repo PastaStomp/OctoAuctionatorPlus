@@ -532,50 +532,6 @@
 
 
 
-  <!-- The Scanning Options screen --> 
-
-	<Frame name="Atr_ScanningOptionsFrame" inherits="Atr_OptionsPanelTemplate" parent="UIParent" enableMouse="true" hidden="true">
-
-		<Scripts>
-			<OnLoad>
-				Atr_LoadOptionsSubPanel (this, ZT("Scanning"));
-			</OnLoad>
-		</Scripts>
-
-		<Frames>
-			<Frame>
-				<Size><AbsDimension x="160" y="22" /></Size>		
-				<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="15" y="-62"/></Offset></Anchor></Anchors>
-				<Layers>
-					<Layer level="BACKGROUND">
-						<FontString inherits="GameFontNormal" text="Minimum quality level:"/>
-					</Layer>
-				</Layers>
-				<Scripts>
-					<OnEnter>	Atr_scanLevelDD_showTip(this);	</OnEnter>
-					<OnLeave>	GameTooltip:Hide();		</OnLeave>
-				</Scripts>
-			</Frame>
-			
-			<Frame name="Atr_scanLevelDD" inherits="UIDropDownMenuTemplate">
-				<Size><AbsDimension x="220" y="22" /></Size>		
-				<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="160" y="-60"/></Offset></Anchor></Anchors>
-				<Scripts>
-					<OnLoad>
-						UIDropDownMenu_Initialize(this, Atr_scanLevelDD_Initialize);
-						UIDropDownMenu_SetSelectedValue(Atr_scanLevelDD, 1);
-						UIDropDownMenu_JustifyText ("LEFT", Atr_scanLevelDD);
-					</OnLoad>
-					<OnEnter>	Atr_scanLevelDD_showTip(this);	</OnEnter>
-					<OnLeave>	GameTooltip:Hide();		</OnLeave>
-				</Scripts>
-			</Frame>
-		</Frames>
-		
-	</Frame>
-
-
-
   <!-- The About screen --> 
 
 

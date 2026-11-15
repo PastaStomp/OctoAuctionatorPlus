@@ -50,7 +50,6 @@ function Atr_InitOptionsPanels()
 	Atr_SetupUCConfigFrame();
 	Atr_SetupStackingFrame();
 	Atr_SetupOptionsFrame();
-	Atr_SetupScanningConfigFrame();
 
 end
 
@@ -655,39 +654,15 @@ end
 
 -----------------------------------------
 
-function Atr_SetupScanningConfigFrame ()
-
-	UIDropDownMenu_Initialize(Atr_scanLevelDD, Atr_scanLevelDD_Initialize);
-	UIDropDownMenu_SetSelectedValue(Atr_scanLevelDD, AUCTIONATOR_SCAN_MINLEVEL);
-end
-
------------------------------------------
-
-function Atr_ScanningOptionsFrame_Save()
-
-	local origValues = zc.msg_str (AUCTIONATOR_SCAN_MINLEVEL);
-
-	AUCTIONATOR_SCAN_MINLEVEL = UIDropDownMenu_GetSelectedValue(Atr_scanLevelDD);
-
-	local newValues = zc.msg_str (AUCTIONATOR_SCAN_MINLEVEL);
-
-	if (origValues ~= newValues) then
-		zc.msg_atr (ZT("scanning options saved"));
-	end
-	
-end
-
------------------------------------------
-
 function Atr_scanLevelDD_Initialize()
 
 	local info = UIDropDownMenu_CreateInfo();
 	
-	Atr_AddMenuPick (info, "|cffa335ee"..ZT("Epic").."|r",			5, Atr_scanLevelDD_OnClick);
-	Atr_AddMenuPick (info, "|cff0070dd"..ZT("Rare").."|r",			4, Atr_scanLevelDD_OnClick);
-	Atr_AddMenuPick (info, "|cff1eff00"..ZT("Uncommon").."|r",		3, Atr_scanLevelDD_OnClick);
-	Atr_AddMenuPick (info, "|cffffffff"..ZT("Common").."|r",		2, Atr_scanLevelDD_OnClick);
-	Atr_AddMenuPick (info, "|cff9d9d9d"..ZT("Poor (all)").."|r",	1, Atr_scanLevelDD_OnClick);
+	Atr_AddMenuPick (info, "|cffa335ee"..ZT("Epic items").."|r",			5, Atr_scanLevelDD_OnClick);
+	Atr_AddMenuPick (info, "|cff0070dd"..ZT("Rare items").."|r",			4, Atr_scanLevelDD_OnClick);
+	Atr_AddMenuPick (info, "|cff1eff00"..ZT("Uncommon items").."|r",		3, Atr_scanLevelDD_OnClick);
+	Atr_AddMenuPick (info, "|cffffffff"..ZT("Common items").."|r",			2, Atr_scanLevelDD_OnClick);
+	Atr_AddMenuPick (info, "|cff9d9d9d"..ZT("Poor items (all)").."|r",		1, Atr_scanLevelDD_OnClick);
 
 end
 
@@ -695,6 +670,10 @@ end
 
 function Atr_scanLevelDD_OnClick()
 	UIDropDownMenu_SetSelectedValue(this.owner, this.value);
+
+	-- there's no separate Save step for this dropdown anymore now that it lives in the Full Scan
+	-- dialog instead of an options sub-panel - commit it immediately
+	AUCTIONATOR_SCAN_MINLEVEL = this.value;
 end
 
 -----------------------------------------

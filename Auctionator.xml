@@ -1216,18 +1216,38 @@
 				<FontString name="Atr_FullScanDBsize" inherits="GameFontHighlight">
 					<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="150" y="-105"/></Offset></Anchor></Anchors>
 				</FontString>
+				<FontString name="Atr_FullScanMinLevelLabel" inherits="GameFontNormal" text="Only scan this and higher:">
+					<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="27" y="-130"/></Offset></Anchor></Anchors>
+				</FontString>
 				<FontString name="Atr_FullScanStatus" inherits="GameFontNormal" text="">
-					<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="27" y="-140"/></Offset></Anchor></Anchors>
+					<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="27" y="-165"/></Offset></Anchor></Anchors>
+				</FontString>
+				<FontString name="Atr_FullScanLinkLabel" inherits="GameFontNormal" text="Link you can copy:">
+					<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="27" y="-350"/></Offset></Anchor></Anchors>
 				</FontString>
 			</Layer>
 
 		</Layers>
 
 		<Frames>
-			
-			<Button name="Atr_FullScanDone" inherits="UIPanelButtonTemplate" text="DONE">
+
+			<Frame name="Atr_scanLevelDD" inherits="UIDropDownMenuTemplate">
+				<Size><AbsDimension x="280" y="22" /></Size>
+				<Anchors><Anchor point="LEFT" relativeTo="Atr_FullScanMinLevelLabel" relativePoint="RIGHT"><Offset><AbsDimension x="-10" y="-2"/></Offset></Anchor></Anchors>
+				<Scripts>
+					<OnLoad>
+						UIDropDownMenu_Initialize(this, Atr_scanLevelDD_Initialize);
+						UIDropDownMenu_SetSelectedValue(Atr_scanLevelDD, 1);
+						UIDropDownMenu_JustifyText ("LEFT", Atr_scanLevelDD);
+					</OnLoad>
+					<OnEnter>	Atr_scanLevelDD_showTip(this);	</OnEnter>
+					<OnLeave>	GameTooltip:Hide();		</OnLeave>
+				</Scripts>
+			</Frame>
+
+			<Button name="Atr_FullScanDone" inherits="UIPanelButtonTemplate" text="Done">
 				<Size><AbsDimension x="80" y="22"/>	</Size>
-				<Anchors><Anchor point="TOPRIGHT"><Offset><AbsDimension x="-30" y="-140"/></Offset></Anchor></Anchors>
+				<Anchors><Anchor point="TOPRIGHT"><Offset><AbsDimension x="-30" y="-165"/></Offset></Anchor></Anchors>
 				<Scripts>
 					<OnClick>
 						Atr_FullScanFrame:Hide();
@@ -1246,15 +1266,38 @@
 			</Button>
 
 			<SimpleHTML name="Atr_FullScanHTML">
-				<Size><AbsDimension x="405" y="300" /></Size>		
-				<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="27" y="-175"/></Offset></Anchor></Anchors>
+				<Size><AbsDimension x="405" y="300" /></Size>
+				<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="27" y="-200"/></Offset></Anchor></Anchors>
 				<FontString inherits="GameFontLightGraySmall"/>
 				<FontStringHeader1 inherits="GameFontNormal"/>
 			</SimpleHTML>
 
+			<!-- WoW can't open external links from in-game, so this is the usual addon workaround:
+			     a read-only EditBox showing just the URL, so the player can click in, Ctrl+A,
+			     Ctrl+C it out to paste into a real browser themselves -->
+			<EditBox name="Atr_FullScanLinkBox" autoFocus="false">
+				<Size><AbsDimension x="380" y="20"/></Size>
+				<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="27" y="-365"/></Offset></Anchor></Anchors>
+				<FontString inherits="ChatFontNormal"/>
+				<Scripts>
+					<OnLoad>
+						this:SetText ("https://github.com/brues-code/AuctionQueryThrottle");
+					</OnLoad>
+					<OnEditFocusGained>
+						this:HighlightText();
+					</OnEditFocusGained>
+					<OnEscapePressed>
+						this:ClearFocus();
+					</OnEscapePressed>
+					<OnTextChanged>
+						Atr_FullScanLinkBox_OnTextChanged();
+					</OnTextChanged>
+				</Scripts>
+			</EditBox>
+
 			<Frame name="Atr_FullScanResults" hidden="true">
 				<Anchors>
-					<Anchor point="TOPLEFT"><Offset><AbsDimension y="-195" x="70"/></Offset></Anchor>
+					<Anchor point="TOPLEFT"><Offset><AbsDimension y="-220" x="70"/></Offset></Anchor>
 					<Anchor point="BOTTOMRIGHT"><Offset><AbsDimension y="30" x="-70"/></Offset></Anchor>
 				</Anchors>
 
