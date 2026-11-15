@@ -33,7 +33,6 @@ function Atr_ApplyStartingPrice (itemStartPrice)
 	end
 end
 
-AUCTIONATOR_ENABLE_ALT		= 1;
 AUCTIONATOR_OPEN_ALL_BAGS	= 1;
 AUCTIONATOR_SHOW_TIPS		= 1;
 AUCTIONATOR_DEF_DURATION	= "N";		-- none
@@ -81,7 +80,6 @@ local auctionator_orig_ChatFrame_OnEvent;
 local auctionator_orig_FriendsFrame_OnEvent;
 
 local gForceMsgAreaUpdate = true;
-local gAtr_ClickAuctionSell = false;
 
 local gOpenAllBags  	= AUCTIONATOR_OPEN_ALL_BAGS;
 local gTimeZero;
@@ -177,7 +175,12 @@ function Atr_RegisterEvents(self)
 
 	self:RegisterEvent("NEW_AUCTION_UPDATE");
 	self:RegisterEvent("PLAYER_ENTERING_WORLD");
-			
+
+	-- fires for both a successful AND a failed right-click sell attempt (e.g. soulbound/quest
+	-- items), unlike NEW_AUCTION_UPDATE which only fires on success - used to catch the native
+	-- "switch to the Auctions tab" behavior on a failed attempt too, see Atr_OnItemLockChanged
+	self:RegisterEvent("ITEM_LOCK_CHANGED");
+
 end
 
 -----------------------------------------
@@ -198,6 +201,7 @@ function Atr_EventHandler()
 	if (event == "AUCTION_HOUSE_SHOW")			then	Atr_OnAuctionHouseShow(); 		end;
 	if (event == "AUCTION_HOUSE_CLOSED")		then	Atr_OnAuctionHouseClosed(); 	end;
 	if (event == "NEW_AUCTION_UPDATE")			then	Atr_OnNewAuctionUpdate(); 		end;
+	if (event == "ITEM_LOCK_CHANGED")			then	Atr_OnItemLockChanged(); 		end;
 	if (event == "CHAT_MSG_ADDON")				then	Atr_OnChatMsgAddon(); 			end;
 	if (event == "WHO_LIST_UPDATE")				then	Atr_OnWhoListUpdate(); 			end;
 	if (event == "PLAYER_ENTERING_WORLD")		then	Atr_OnPlayerEnteringWorld(); 	end;
@@ -1038,7 +1042,6 @@ end
 
 function Atr_ClickAuctionSellItemButton (self, button)
 
-	gAtr_ClickAuctionSell = true;
 	ClickAuctionSellItemButton();
 end
 
@@ -1106,7 +1109,7 @@ end
 
 function Atr_ContainerFrameItemButton_OnClick (button, ignoreModifiers)
 
-	if (button == "LeftButton" and AUCTIONATOR_ENABLE_ALT ~= 0 and AuctionFrame and AuctionFrame:IsShown() and IsAltKeyDown() and not CursorHasItem()) then
+	if (button == "LeftButton" and AuctionFrame and AuctionFrame:IsShown() and IsAltKeyDown() and not CursorHasItem()) then
 
 		Atr_LoadContainerItemToSellPane();
 		return;
@@ -2541,17 +2544,20 @@ end
 -----------------------------------------
 
 function Atr_OnNewAuctionUpdate()
-	
-	if (not gAtr_ClickAuctionSell) then
-		gPrevSellItemLink = nil;
-		return;
-	end
-	
---	zc.md ("gAtr_ClickAuctionSell:", gAtr_ClickAuctionSell);
-	
-	gAtr_ClickAuctionSell = false;
 
+	-- used to only react when one of our own click/drag handlers had just set a flag first -
+	-- confirmed (via direct event logging) that NEW_AUCTION_UPDATE fires reliably for a
+	-- right-click placement too, same as a drag, with arg1 set to the mouse button used. The
+	-- itemLink comparison below already detects a genuine change on its own; no flag needed.
 	local auctionItemName, auctionCount, auctionLink = Atr_GetSellItemInfo();
+
+	-- a right-click (or the vanilla "Auctions" tab's own sell slot) can place an item here without
+	-- ever switching to our own Sell tab first - make sure it's actually showing. This must run
+	-- regardless of whether the link below counts as "changed": right-clicking a second stack of
+	-- the same item leaves auctionLink identical to gPrevSellItemLink, but still needs the tab switch.
+	if (auctionLink and not Atr_IsTabSelected(SELL_TAB)) then
+		Atr_SelectPane (SELL_TAB);
+	end
 
 	if (gPrevSellItemLink ~= auctionLink) then
 
@@ -2564,7 +2570,7 @@ function Atr_OnNewAuctionUpdate()
 			Atr_ClearList();		-- better UE
 			gSellPane:SetToShowCurrent();
 		end
-		
+
 		MoneyInputFrame_SetCopper (Atr_StackPrice, 0);
 		MoneyInputFrame_SetCopper (Atr_StartingPrice,  0);
 		Atr_ResetDuration();
@@ -2605,16 +2611,30 @@ function Atr_OnNewAuctionUpdate()
 		Atr_FindBestCurrentAuction();
 		Atr_ResetDuration();
 	end
-		
+
 	gSellPane.UINeedsUpdate = true;
 
 end
 
 -----------------------------------------
 
+-- a right-click sell attempt that fails (soulbound, quest item, etc.) still triggers the native
+-- "switch to the Auctions tab" behavior even though nothing actually landed in the sell slot, so
+-- NEW_AUCTION_UPDATE never fires to catch it - this fires for both outcomes though, so just
+-- switch back to our own Sell tab here too rather than leaving the vanilla one showing
+function Atr_OnItemLockChanged ()
+
+	if (arg1 == "RightButton" and AuctionFrame and AuctionFrame:IsShown() and not Atr_IsTabSelected(SELL_TAB)) then
+		Atr_SelectPane (SELL_TAB);
+	end
+
+end
+
+-----------------------------------------
+
 -- after a multi-stack post finishes, Compat.lua moves whatever's left of the item back into the
--- sell slot itself rather than leaving it empty - that's not a player-driven slot change, so the
--- gAtr_ClickAuctionSell gate above never sees it and the cached bag count (used by the max
+-- sell slot itself rather than leaving it empty - same item, same link, so Atr_OnNewAuctionUpdate's
+-- own change-detection never sees it as a change and the cached bag count (used by the max
 -- buttons and the Create-Auctions button's enabled state) goes stale. Re-sync just that, leaving
 -- whatever price/stacking the player already configured untouched.
 function Atr_OnRefillSettled ()
@@ -2787,7 +2807,7 @@ function Atr_UpdateUI_SellPane (needsUpdate)
 			end
 		
 		elseif (gCurrentPane:IsScanEmpty()) then
-			Atr_SetMessage (ZT("Drag items onto this window to sell them."));
+			Atr_SetMessage (ZT("Right-click items in your bag or drag them here to sell them"));
 		end
 	end
 

@@ -92,9 +92,8 @@ end
 
 function Atr_BasicOptionsFrame_Save()
 
-	local origValues = zc.msg_str (AUCTIONATOR_ENABLE_ALT, AUCTIONATOR_OPEN_ALL_BAGS, AUCTIONATOR_DEFTAB, AUCTIONATOR_DEF_DURATION);
+	local origValues = zc.msg_str (AUCTIONATOR_OPEN_ALL_BAGS, AUCTIONATOR_DEFTAB, AUCTIONATOR_DEF_DURATION);
 
-	AUCTIONATOR_ENABLE_ALT		= zc.BoolToNum(AuctionatorOption_Enable_Alt_CB:GetChecked ());
 	AUCTIONATOR_OPEN_ALL_BAGS	= zc.BoolToNum(AuctionatorOption_Open_All_Bags_CB:GetChecked ());
 
 	AUCTIONATOR_DEFTAB			= UIDropDownMenu_GetSelectedValue(AuctionatorOption_Deftab);
@@ -107,7 +106,7 @@ function Atr_BasicOptionsFrame_Save()
 		if (Atr_RB_L:GetChecked())	then	AUCTIONATOR_DEF_DURATION = "L"; end;
 	end
 
-	local newValues = zc.msg_str (AUCTIONATOR_ENABLE_ALT, AUCTIONATOR_OPEN_ALL_BAGS, AUCTIONATOR_DEFTAB, AUCTIONATOR_DEF_DURATION);
+	local newValues = zc.msg_str (AUCTIONATOR_OPEN_ALL_BAGS, AUCTIONATOR_DEFTAB, AUCTIONATOR_DEF_DURATION);
 
 	if (origValues ~= newValues) then
 		zc.msg_atr (ZT ("basic options saved"));
@@ -121,7 +120,6 @@ function Atr_SetupBasicOptionsFrame()
 
 	Atr_BasicOptionsFrame_BTitle:SetText (string.format (ZT("Basic Options for %s"), "|cffffff55"..UnitName("player")));
 
-	AuctionatorOption_Enable_Alt_CB:SetChecked			(zc.NumToBool(AUCTIONATOR_ENABLE_ALT));
 	AuctionatorOption_Open_All_Bags_CB:SetChecked		(zc.NumToBool(AUCTIONATOR_OPEN_ALL_BAGS));
 
 	UIDropDownMenu_Initialize		(AuctionatorOption_Deftab, AuctionatorOption_Deftab_Initialize);
@@ -625,10 +623,6 @@ function Atr_ShowOptionTooltip (elem)
 
 	local name = elem:GetName();
 	local text;
-
-	if (zc.StringContains (name, "Enable_Alt")) then
-		text = ZT("If this option is checked, holding the Alt key down while clicking an item in your bags will switch to the Auctionator panel, place the item in the Auction Item area, and start the scan.");
-	end
 
 	if (zc.StringContains (name, "Deftab")) then
 		text = ZT("Select the Auctionator panel to be displayed first whenever you open the Auction House window.");
