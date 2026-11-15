@@ -842,12 +842,12 @@ function Atr_AuctionFrameTab_OnClick (index)
 		PanelTemplates_SetTab(AuctionFrame, index);
 
 --		AuctionFrameTopLeft:SetTexture	("Interface\\AuctionFrame\\UI-AuctionFrame-Auction-TopLeft");
-		AuctionFrameTopLeft:SetTexture	("Interface\\AddOns\\OctoAuctionator\\Images\\Atr_topleft.tga");
-		AuctionFrameBotLeft:SetTexture	("Interface\\AddOns\\OctoAuctionator\\Images\\Atr_botleft.tga");
-		AuctionFrameTop:SetTexture		("Interface\\AddOns\\OctoAuctionator\\Images\\Atr_top.tga");
-		AuctionFrameTopRight:SetTexture	("Interface\\AddOns\\OctoAuctionator\\Images\\Atr_topright.tga");
-		AuctionFrameBot:SetTexture		("Interface\\AddOns\\OctoAuctionator\\Images\\Atr_bot.tga");
-		AuctionFrameBotRight:SetTexture	("Interface\\AddOns\\OctoAuctionator\\Images\\Atr_botright.tga");
+		AuctionFrameTopLeft:SetTexture	("Interface\\AddOns\\OctoAuctionatorPlus\\Images\\Atr_topleft.tga");
+		AuctionFrameBotLeft:SetTexture	("Interface\\AddOns\\OctoAuctionatorPlus\\Images\\Atr_botleft.tga");
+		AuctionFrameTop:SetTexture		("Interface\\AddOns\\OctoAuctionatorPlus\\Images\\Atr_top.tga");
+		AuctionFrameTopRight:SetTexture	("Interface\\AddOns\\OctoAuctionatorPlus\\Images\\Atr_topright.tga");
+		AuctionFrameBot:SetTexture		("Interface\\AddOns\\OctoAuctionatorPlus\\Images\\Atr_bot.tga");
+		AuctionFrameBotRight:SetTexture	("Interface\\AddOns\\OctoAuctionatorPlus\\Images\\Atr_botright.tga");
 
 		if (index == Atr_FindTabIndex(SELL_TAB))	then gCurrentPane = gSellPane; end;
 		if (index == Atr_FindTabIndex(BUY_TAB))		then gCurrentPane = gShopPane; end;
@@ -2971,9 +2971,9 @@ local ITEM_RARITY_COLORS = {
 local ITEM_RARITY_COLOR_DEFAULT = {1.0, 1.0, 1.0};
 
 local UC_ICON_TEXTURES = {
-	safe		= "Interface\\AddOns\\OctoAuctionator\\Images\\auction_undercut_no.tga",
-	partial		= "Interface\\AddOns\\OctoAuctionator\\Images\\auction_undercut_partial.tga",
-	undercut	= "Interface\\AddOns\\OctoAuctionator\\Images\\auction_undercut_yes.tga",
+	safe		= "Interface\\AddOns\\OctoAuctionatorPlus\\Images\\auction_undercut_no.tga",
+	partial		= "Interface\\AddOns\\OctoAuctionatorPlus\\Images\\auction_undercut_partial.tga",
+	undercut	= "Interface\\AddOns\\OctoAuctionatorPlus\\Images\\auction_undercut_yes.tga",
 };
 
 -- small custom-icon badge over the bottom-left of the item icon, flagging undercut status. It used
