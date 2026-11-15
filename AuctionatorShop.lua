@@ -295,18 +295,16 @@ function Atr_Shop_OnFinishScan ()
 	if (recentsList) then
 
 		local isRecentsShown = (gCurrentSList == recentsList);
-		
+
+		-- a repeat search should always jump back to the top as the most recent one, not just
+		-- when it's buried past the first page or some other list happens to be the one shown
 		local n = recentsList:FindItemIndex(searchText);
 
-		if (n > 14 or (not isRecentsShown and n > 0)) then
+		if (n > 0) then
 			table.remove (recentsList.items, n);
 		end
-		
-		n = recentsList:FindItemIndex(searchText);
-		
-		if (n == 0) then
-			recentsList:AddItem (searchText);
-		end
+
+		recentsList:AddItem (searchText);
 		
 		if (isRecentsShown) then
 			FauxScrollFrame_SetOffset (Atr_Hlist_ScrollFrame, 0);
