@@ -1331,6 +1331,9 @@ function auctionator_ChatFrame_OnEvent(event)
 		if (arg1 == ERR_AUCTION_REMOVED) then		-- absorb the Auction Cancelled message
 			return;
 		end
+		if (arg1 and string.find (arg1, "Auction deposit")) then		-- this server's own per-auction deposit-paid notice - redundant with our "Auctions created for..." summary, and spams once per auction in a batch
+			return;
+		end
 	end
 
 	return auctionator_orig_ChatFrame_OnEvent (event);
