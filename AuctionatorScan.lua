@@ -1305,6 +1305,8 @@ function Atr_FullScanFinish()
 	Atr_FSR_ignored_count:SetText	(totalItems - (gNumAdded + gNumUpdated));
 
 	Atr_FullScanHTML:Hide();
+	Atr_FullScanLinkLabel:Hide();
+	Atr_FullScanLinkBox:Hide();
 	Atr_FullScanResults:Show();
 
 	Atr_FullScanResults:SetBackdropColor (0.3, 0.3, 0.4);
@@ -1347,6 +1349,8 @@ end
 function Atr_ShowFullScanFrame()
 
 	Atr_FullScanHTML:Show();
+	Atr_FullScanLinkLabel:Show();
+	Atr_FullScanLinkBox:Show();
 	Atr_FullScanResults:Hide();
 
 	Atr_FullScanFrame:Show();
