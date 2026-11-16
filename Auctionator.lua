@@ -116,6 +116,13 @@ local gActiveAuctions = {};
 local gActiveAuctionIcons = {};		-- textures captured straight off the native "owner" auction query - always available instantly, unlike GetItemInfo-by-name
 local gActiveAuctionRarity = {};		-- same deal, for item rarity (quality)
 
+-- GetNumAuctionItems("owner")/GetAuctionItemInfo("owner", i) only ever reflect one page (up to 50
+-- entries) at a time, the same as a browse/search query - GetOwnerAuctionItems(page) requests a
+-- specific page, mirroring the native Auctions tab's own page-arrow button. gOwnerScanActive
+-- tracks a multi-page walk in progress across successive AUCTION_OWNED_LIST_UPDATE events.
+local gOwnerScanActive = false;
+local gOwnerScanPage = 0;
+
 local gHlistNeedsUpdate = false;
 
 local gSellPane;
@@ -901,12 +908,13 @@ function Atr_AuctionFrameTab_OnClick (index)
 			if (Atr_Hlist_ScrollFrameScrollBar) then
 				Atr_Hlist_ScrollFrameScrollBar:SetValue (0);	-- FauxScrollFrame_SetOffset alone doesn't visually snap the slider back to the top
 			end
-			Atr_DisplayHlist();
-			Atr_DropDown1:Show();
-			
+
 			if (UIDropDownMenu_GetSelectedValue(Atr_DropDown1) == MODE_LIST_ACTIVE) then
 				Atr_CheckActiveButton:Show();
 			end
+
+			Atr_DisplayHlist();
+			Atr_DropDown1:Show();
 		end
 		
 		
@@ -1247,6 +1255,43 @@ function Atr_OnAuctionOwnedUpdate ()
 
 	gItemPostingInProgress = false;
 
+	-- this single event does double duty: it's both "something about your owned auctions
+	-- changed" AND (if gOwnerScanActive) the arrival of whichever page we just explicitly
+	-- requested via GetOwnerAuctionItems. Handle the scan continuation first, unconditionally -
+	-- everything below still runs too (a posting confirmation can overlap with an in-progress
+	-- scan), it just mustn't flush gActiveAuctions out from under a scan that's still filling it in.
+	local wasScanning = gOwnerScanActive;
+
+	if (gOwnerScanActive) then
+
+		local numBatch, totalAuctions = GetNumAuctionItems ("owner");
+
+		local i;
+		for i = 1, numBatch do
+			local name, texture, count, quality = GetAuctionItemInfo ("owner", i);
+
+			if (name and count > 0) then
+				gActiveAuctions[name] = (gActiveAuctions[name] or 0) + count;
+
+				if (texture and not gActiveAuctionIcons[name]) then
+					gActiveAuctionIcons[name] = texture;
+				end
+
+				if (quality and not gActiveAuctionRarity[name]) then
+					gActiveAuctionRarity[name] = quality;
+				end
+			end
+		end
+
+		if ((gOwnerScanPage + 1) * 50 < (totalAuctions or 0)) then
+			gOwnerScanPage = gOwnerScanPage + 1;
+			GetOwnerAuctionItems (gOwnerScanPage);
+		else
+			gOwnerScanActive = false;
+			gHlistNeedsUpdate = true;		-- the full, now-complete list is ready to redraw
+		end
+	end
+
 	if (Atr_IsModeActiveAuctions()) then
 		gHlistNeedsUpdate = true;
 	end
@@ -1256,9 +1301,11 @@ function Atr_OnAuctionOwnedUpdate ()
 		return;
 	end;
 
-	gActiveAuctions = {};		-- always flush this cache
-	gActiveAuctionIcons = {};
-	gActiveAuctionRarity = {};
+	if (not wasScanning) then
+		gActiveAuctions = {};		-- flush so the next view of Active Listings starts a fresh scan
+		gActiveAuctionIcons = {};
+		gActiveAuctionRarity = {};
+	end
 
 	if (gJustPosted_ItemName) then
 
@@ -1270,7 +1317,6 @@ function Atr_OnAuctionOwnedUpdate ()
 		end
 	end
 
-	
 end
 
 -----------------------------------------
@@ -2274,18 +2320,27 @@ end
 
 -----------------------------------------
 
-function Atr_OnAuctionHouseShow()
+-- the stock "Auctions" tab's OnShow is what actually asks the server for the player's owned
+-- auctions at all; our tabs hide that frame instead of showing it, so without this one-time
+-- trigger at AH-open, GetNumAuctionItems("owner") would stay completely empty for the whole
+-- session. Once this has run once, GetOwnerAuctionItems(page) (see Atr_BuildActiveAuctions) is
+-- the real mechanism for pulling fresh/further pages - don't call this again mid-session, it'd
+-- race with an in-progress page walk and double-count whatever page happens to be in flight.
+function Atr_RefreshOwnedAuctions ()
 
-	gOpenAllBags = AUCTIONATOR_OPEN_ALL_BAGS;
-
-	-- the stock "Auctions" tab's OnShow is what actually asks the server for the player's owned
-	-- auctions; our tabs hide that frame instead of showing it, so GetNumAuctionItems("owner")
-	-- stayed empty (and the More tab's "Active Items" list with it) until the player manually
-	-- clicked the vanilla tab at least once. Trigger that OnShow ourselves instead.
 	if (AuctionFrameAuctions and not AuctionFrameAuctions:IsShown()) then
 		AuctionFrameAuctions:Show();
 		AuctionFrameAuctions:Hide();
 	end
+end
+
+-----------------------------------------
+
+function Atr_OnAuctionHouseShow()
+
+	gOpenAllBags = AUCTIONATOR_OPEN_ALL_BAGS;
+
+	Atr_RefreshOwnedAuctions ();
 
 	if (AUCTIONATOR_DEFTAB == 1) then		Atr_SelectPane (SELL_TAB);	end
 	if (AUCTIONATOR_DEFTAB == 2) then		Atr_SelectPane (BUY_TAB);	end
@@ -2916,33 +2971,27 @@ end
 
 -----------------------------------------
 
+-- GetNumAuctionItems("owner")/GetAuctionItemInfo("owner", i) only ever reflect a single page (up
+-- to 50 entries) of your own auctions at a time - same as a browse/search query. Confirmed via
+-- debug logging: with 73 real active auctions, page 0 alone reported exactly 50, zero gaps, every
+-- one correctly counted - nothing wrong with reading page 0, there just was never a request for
+-- anything past it. GetOwnerAuctionItems(page) requests a specific page (the same native function
+-- the Auctions tab's own page-arrow button uses) - walk every page here instead of just the first.
+-- This kicks off the walk and returns immediately; Atr_OnAuctionOwnedUpdate drives it page by page
+-- as each one's AUCTION_OWNED_LIST_UPDATE arrives, and flags gHlistNeedsUpdate once it's done.
 function Atr_BuildActiveAuctions ()
+
+	if (gOwnerScanActive) then
+		return;		-- already walking the pages; let it finish rather than restarting from page 0
+	end
 
 	gActiveAuctions = {};
 	gActiveAuctionIcons = {};
 	gActiveAuctionRarity = {};
 
-	local i = 1;
-	while (true) do
-		local name, texture, count, quality = GetAuctionItemInfo ("owner", i);
-		if (name == nil) then
-			break;
-		end
-
-		if (count > 0) then		-- count is 0 for sold items; count here is this listing's stack size, so sum it to get the total quantity you have up
-			gActiveAuctions[name] = (gActiveAuctions[name] or 0) + count;
-
-			if (texture and not gActiveAuctionIcons[name]) then
-				gActiveAuctionIcons[name] = texture;
-			end
-
-			if (quality and not gActiveAuctionRarity[name]) then
-				gActiveAuctionRarity[name] = quality;
-			end
-		end
-
-		i = i + 1;
-	end
+	gOwnerScanActive = true;
+	gOwnerScanPage = 0;
+	GetOwnerAuctionItems (gOwnerScanPage);
 end
 
 -----------------------------------------
@@ -4208,7 +4257,7 @@ function Atr_DropDown1_OnClick()
 	if (mode == MODE_LIST_ACTIVE) then
 		Atr_DisplayHlist();
 	end
-	
+
 end
 
 
@@ -4570,11 +4619,10 @@ function Atr_Cancel_Undercuts_OnClick (nameToCancel)
 	for i = num, 1, -1 do
 		local name, _, stackSize, _, _, _, _, _, buyoutPrice = GetAuctionItemInfo ("owner", i);
 
-		if (name == nil) then
-			break;
-		end
-		
-		if (nameToCancel == nil or zc.StringSame (name, nameToCancel)) then
+		-- a slot can legitimately return a nil name (sold/expired/pending removal) without that
+		-- being the end of the list - skip it rather than stopping here and missing everything
+		-- below this index
+		if (name and (nameToCancel == nil or zc.StringSame (name, nameToCancel))) then
 			local scan = Atr_FindScan (name);
 			if (scan and scan.absoluteBest and scan.whenScanned ~= 0 and scan.yourBestPrice and scan.yourWorstPrice) then
 				
