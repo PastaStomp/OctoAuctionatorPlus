@@ -1172,10 +1172,61 @@
 				<Scripts><OnClick>Atr_CancelUndercut_Confirm(true);</OnClick></Scripts>
 			</Button>
 		</Frames>
-		
+
 	</Frame>
 
 
+   <!-- Cancel Auction Count dialog -->
+
+	<Frame name="Atr_CancelCountFrame" inherits="AuctionatorDialog" toplevel="true" parent="UIParent" enableMouse="true" frameStrata="DIALOG" hidden="true">
+		<Size><AbsDimension x="260" y="120" /></Size>
+		<!-- anchored dynamically in Lua (Atr_CancelSelection_OnClick), relative to AuctionFrame,
+		     right before showing - AuctionFrame may not exist yet when this XML first parses, so
+		     a static relativeTo="AuctionFrame" anchor here can't be trusted to resolve -->
+		<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="40" y="-390"/></Offset></Anchor></Anchors>
+
+		<Layers>
+			<Layer level="BACKGROUND">
+				<FontString inherits="GameFontNormal" text="Cancel how many auctions?">
+					<Anchors><Anchor point="TOP"><Offset><AbsDimension y="-16"/></Offset></Anchor></Anchors>
+				</FontString>
+				<FontString name="Atr_CancelCount_Label" inherits="GameFontHighlight" text="Number to cancel:">
+					<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="20" y="-56"/></Offset></Anchor></Anchors>
+				</FontString>
+			</Layer>
+		</Layers>
+
+		<Frames>
+
+			<EditBox name="Atr_CancelCount_Box" autoFocus="false" numeric="true" inherits="InputBoxTemplate">
+				<Size><AbsDimension x="50" y="20"/></Size>
+				<Anchors>
+					<Anchor point="LEFT" relativeTo="Atr_CancelCount_Label" relativePoint="RIGHT">
+						<Offset><AbsDimension x="8" y="0"/></Offset>
+					</Anchor>
+				</Anchors>
+				<FontString inherits="ChatFontNormal" bytes="8" justifyH="CENTER" />
+				<Scripts>
+					<OnEscapePressed>this:ClearFocus();</OnEscapePressed>
+					<OnEnterPressed>Atr_CancelCount_OnClick();</OnEnterPressed>
+				</Scripts>
+			</EditBox>
+
+			<Button name="Atr_CancelCount_OKButton" inherits="UIPanelButtonTemplate" text="OK">
+				<Size><AbsDimension x="70" y="22"/></Size>
+				<Anchors><Anchor point="BOTTOMRIGHT"><Offset><AbsDimension x="-20" y="16"/></Offset></Anchor></Anchors>
+				<Scripts><OnClick>Atr_CancelCount_OnClick();</OnClick></Scripts>
+			</Button>
+
+			<Button inherits="UIPanelButtonTemplate" text="Cancel">
+				<Size><AbsDimension x="70" y="22"/></Size>
+				<Anchors><Anchor point="RIGHT" relativeTo="Atr_CancelCount_OKButton" relativePoint="LEFT"><Offset><AbsDimension x="-4" y="0"/></Offset></Anchor></Anchors>
+				<Scripts><OnClick>Atr_CancelCountFrame:Hide();</OnClick></Scripts>
+			</Button>
+
+		</Frames>
+
+	</Frame>
 
 
 	<!-- -->

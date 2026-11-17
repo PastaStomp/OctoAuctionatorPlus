@@ -154,6 +154,8 @@ local gOwnerCancelT          = 0;
 local gOwnerCancelPendingName       = nil;	-- the slot's own name/stackSize/buyoutPrice at the moment Atr_CancelAuction was called on it -
 local gOwnerCancelPendingStackSize  = nil;	-- needed again once confirmation arrives, by which point re-reading "owner" index foundIndex
 local gOwnerCancelPendingBuyout     = nil;	-- may no longer refer to the same (or any) auction
+local gOwnerCancelMaxCount          = nil;	-- nil = cancel every match; otherwise stop once this many are confirmed
+local gOwnerCancelConfirmedCount    = 0;
 
 local gHlistNeedsUpdate = false;
 
@@ -1333,9 +1335,8 @@ function Atr_OnAuctionOwnedUpdate ()
 			gOwnerScanActive = false;
 			gHlistNeedsUpdate = true;		-- the full, now-complete list is ready to redraw
 
-			-- Atr_CancelAuction_ByIndex and Atr_Cancel_Undercuts_OnClick assume the shared
-			-- owner-page cursor always sits at page 0 - repoint it back there now that the walk
-			-- is done, instead of leaving it wherever the walk happened to end
+			-- put the shared owner-page cursor back at page 0 for whatever reads it next, rather
+			-- than leaving it wherever this walk happened to end
 			if (gOwnerScanPage > 0) then
 				gOwnerScanResetting = true;
 				GetOwnerAuctionItems (0);
@@ -3963,23 +3964,50 @@ end
 -- starts a confirmed, one-at-a-time cancel walk (see the gOwnerCancel* state block near the top
 -- of this file for why). matchFn(name, stackSize, buyoutPrice) decides whether a given owner slot
 -- should be cancelled; onEach(name, stackSize, buyoutPrice) fires once a cancel is genuinely
--- confirmed by the server; onComplete() fires once no further matches remain on any page. Returns
--- false without starting anything if another owner-page walk (read or cancel) is already active.
-function Atr_StartOwnerCancelWalk (matchFn, onEach, onComplete)
+-- confirmed by the server; onComplete() fires once no further matches remain on any page, or once
+-- maxCount confirmed cancels have happened (whichever comes first) - pass nil for maxCount to
+-- cancel every match. Returns false without starting anything if another owner-page walk (read or
+-- cancel) is already active.
+function Atr_StartOwnerCancelWalk (matchFn, onEach, onComplete, maxCount)
 
 	if (gOwnerScanActive or gOwnerCancelState ~= nil) then
 		return false;
 	end
 
-	gOwnerCancelState      = "findmatch";
 	gOwnerCancelPage       = 0;
 	gOwnerCancelMatchFn    = matchFn;
 	gOwnerCancelOnEach     = onEach;
 	gOwnerCancelOnComplete = onComplete;
 	gOwnerCancelConfirmed  = false;
 	gOwnerCancelFailed     = false;
+	gOwnerCancelMaxCount       = (maxCount and maxCount > 0) and maxCount or nil;
+	gOwnerCancelConfirmedCount = 0;
+
+	-- explicitly (re-)request page 0 rather than assuming the shared cursor is already sitting
+	-- there - it may currently be wherever some other, unrelated owner-page read last left it
+	GetOwnerAuctionItems (gOwnerCancelPage);
+	gOwnerCancelState = "pageloading";
 
 	return true;
+end
+
+-----------------------------------------
+
+-- shared by both the "no match found anywhere" and "reached the requested maxCount" endings
+local function Atr_FinishOwnerCancelWalk ()
+
+	local page = gOwnerCancelPage;
+	local onComplete = gOwnerCancelOnComplete;
+
+	gOwnerCancelState = nil;
+
+	if (onComplete) then
+		onComplete ();
+	end
+
+	if (page > 0) then
+		GetOwnerAuctionItems (0);		-- put the shared owner-page cursor back at page 0 for whatever reads it next
+	end
 end
 
 -----------------------------------------
@@ -4005,6 +4033,13 @@ function Atr_OwnerCancelStep ()
 			end
 			AuctionatorSubtractFromScan (gOwnerCancelPendingName, gOwnerCancelPendingStackSize, gOwnerCancelPendingBuyout);
 			gJustPosted_ItemName = nil;
+
+			gOwnerCancelConfirmedCount = gOwnerCancelConfirmedCount + 1;
+
+			if (gOwnerCancelMaxCount and gOwnerCancelConfirmedCount >= gOwnerCancelMaxCount) then
+				Atr_FinishOwnerCancelWalk ();
+				return;
+			end
 
 			-- re-request the current page explicitly rather than trusting GetAuctionItemInfo's
 			-- cache is already fully settled the instant ERR_AUCTION_REMOVED fires - confirmed by
@@ -4066,19 +4101,7 @@ function Atr_OwnerCancelStep ()
 		gOwnerCancelState = "pageloading";
 
 	else
-
-		local page = gOwnerCancelPage;
-		local onComplete = gOwnerCancelOnComplete;
-
-		gOwnerCancelState = nil;
-
-		if (onComplete) then
-			onComplete ();
-		end
-
-		if (page > 0) then
-			GetOwnerAuctionItems (0);		-- put the shared owner-page cursor back at page 0 for whatever reads it next
-		end
+		Atr_FinishOwnerCancelWalk ();
 	end
 end
 
@@ -4106,32 +4129,60 @@ end
 
 -----------------------------------------
 
+-- remembers which row "Cancel Auctions" was clicked for, so the count-prompt dialog's OK button
+-- (clicked later, possibly after other selections changed) still targets the right auction
+local gCancelPromptItemName;
+local gCancelPromptItemLink;
+local gCancelPromptBuyoutPrice;
+local gCancelPromptStackSize;
+
 function Atr_CancelSelection_OnClick()
 
 	if (not Atr_ShowingCurrentAuctions()) then
 		return;
 	end
-	
-	Atr_CancelAuction_ByIndex (gCurrentPane.currIndex);
+
+	local data = gCurrentPane.activeScan.sortedData[gCurrentPane.currIndex];
+
+	if (not data or not data.yours) then
+		return;
+	end
+
+	gCancelPromptItemName    = gCurrentPane.activeScan.itemName;
+	gCancelPromptItemLink    = gCurrentPane.activeScan.itemLink;
+	gCancelPromptBuyoutPrice = data.buyoutPrice;
+	gCancelPromptStackSize   = data.stackSize;
+
+	Atr_CancelCount_Box:SetText (tostring (data.count or 1));
+
+	Atr_CancelCountFrame:ClearAllPoints ();
+	Atr_CancelCountFrame:SetPoint ("BOTTOMRIGHT", AuctionFrame, "BOTTOMRIGHT", -20, 20);
+
+	Atr_CancelCountFrame:Show ();
 end
 
 -----------------------------------------
 
--- starts a confirmed, one-at-a-time cancel walk for every owner auction matching this row's
--- item/stack size/buyout price, across every page. Returns immediately; Atr_LogCancelAuction
--- fires once the whole walk completes (see Atr_StartOwnerCancelWalk/Atr_OwnerCancelStep).
-function Atr_CancelAuction_ByIndex(index)
+function Atr_CancelCount_OnClick ()
 
-	local data = gCurrentPane.activeScan.sortedData[index];
+	Atr_CancelCountFrame:Hide ();
 
-	if (not data.yours) then
-		return;
+	local maxCount = Atr_CancelCount_Box:GetNumber();
+	if (maxCount == nil or maxCount < 1) then
+		return;		-- nothing sensible was entered - do nothing rather than guess
 	end
 
-	local itemName    = gCurrentPane.activeScan.itemName;
-	local itemLink    = gCurrentPane.activeScan.itemLink;
-	local buyoutPrice = data.buyoutPrice;
-	local stackSize   = data.stackSize;
+	Atr_CancelAuctionsMatching (gCancelPromptItemName, gCancelPromptItemLink, gCancelPromptBuyoutPrice, gCancelPromptStackSize, maxCount);
+end
+
+-----------------------------------------
+
+-- starts a confirmed, one-at-a-time cancel walk for every owner auction matching this item/stack
+-- size/buyout price, across every page, stopping once maxCount are confirmed (nil = cancel every
+-- match). Returns immediately; Atr_LogCancelAuction fires once the whole walk completes (see
+-- Atr_StartOwnerCancelWalk/Atr_OwnerCancelStep).
+function Atr_CancelAuctionsMatching (itemName, itemLink, buyoutPrice, stackSize, maxCount)
+
 	local numCancelled = 0;
 
 	Atr_StartOwnerCancelWalk (
@@ -4149,8 +4200,27 @@ function Atr_CancelAuction_ByIndex(index)
 			local depositLost = deposit and (deposit * numCancelled) or nil;
 			Atr_LogCancelAuction (numCancelled, itemLink, stackSize, depositLost);
 			gHlistNeedsUpdate = true;
-		end
+		end,
+
+		maxCount
 	);
+end
+
+-----------------------------------------
+
+-- cancels every owner auction matching this row's item/stack size/buyout price, across every
+-- page. Kept as its own entry point (rather than folded into the dialog flow above) since
+-- Atr_CancelUndercuts_CurrentScan already calls this by sortedData index, unprompted, once the
+-- player has confirmed an undercut cancellation.
+function Atr_CancelAuction_ByIndex(index)
+
+	local data = gCurrentPane.activeScan.sortedData[index];
+
+	if (not data.yours) then
+		return;
+	end
+
+	Atr_CancelAuctionsMatching (gCurrentPane.activeScan.itemName, gCurrentPane.activeScan.itemLink, data.buyoutPrice, data.stackSize, nil);
 end
 
 -----------------------------------------
