@@ -118,10 +118,42 @@ local gActiveAuctionRarity = {};		-- same deal, for item rarity (quality)
 
 -- GetNumAuctionItems("owner")/GetAuctionItemInfo("owner", i) only ever reflect one page (up to 50
 -- entries) at a time, the same as a browse/search query - GetOwnerAuctionItems(page) requests a
--- specific page, mirroring the native Auctions tab's own page-arrow button. gOwnerScanActive
--- tracks a multi-page walk in progress across successive AUCTION_OWNED_LIST_UPDATE events.
+-- specific page, mirroring the native Auctions tab's own page-arrow button. There is only ONE
+-- shared client-side "current owner page" cursor though - every piece of code reading the
+-- "owner" query sees whichever page was most recently requested, not necessarily page 0.
+-- Atr_CancelAuction_ByIndex/Atr_Cancel_Undercuts_OnClick assume it always sits at page 0 (true
+-- before this walk existed, since nothing else ever repointed it) - gOwnerScanActive tracks a
+-- multi-page walk in progress, and gOwnerScanResetting tracks the trailing page-0 request that
+-- restores that assumption once the walk finishes, without re-flushing the aggregate it just built.
 local gOwnerScanActive = false;
 local gOwnerScanPage = 0;
+local gOwnerScanResetting = false;
+
+-- Cancelling has two separate problems beyond simple pagination, both confirmed by direct
+-- testing: (1) the client's own list/index shrinks optimistically the instant CancelAuction() is
+-- issued, well before the server has actually accepted or rejected it - exactly the same false-
+-- positive trap documented for StartAuction/posting elsewhere in this file, just not previously
+-- recognized here. Firing many CancelAuction() calls in one batch and trusting the client's own
+-- shrinking list/counts as proof of success is what let a run of "cancelled" auctions turn out to
+-- still be live on the server. (2) the real server confirmation (CHAT_MSG_SYSTEM's
+-- ERR_AUCTION_REMOVED) is the only trustworthy signal, same as ERR_AUCTION_STARTED is for
+-- posting. So: cancel exactly one match at a time, wait for that confirmation (or a timeout, if
+-- cancelling something that doesn't exist on this server, or something else went wrong) before
+-- counting it and moving on to the next, walking every page as needed in between. Shared by both
+-- Atr_CancelAuction_ByIndex and Atr_Cancel_Undercuts_OnClick; polled every frame by
+-- Atr_OwnerCancelStep (called from Atr_OnUpdate), confirmed via auctionator_ChatFrame_OnEvent,
+-- and advanced to the next page by Atr_OnAuctionOwnedUpdate once a requested page's data arrives.
+local gOwnerCancelState      = nil;	-- nil (inactive) | "findmatch" | "pageloading" | "cancelwait"
+local gOwnerCancelPage       = 0;
+local gOwnerCancelMatchFn    = nil;	-- function(name, stackSize, buyoutPrice) -> true if this slot should be cancelled
+local gOwnerCancelOnEach     = nil;	-- function(name, stackSize, buyoutPrice), called once a cancel is actually confirmed
+local gOwnerCancelOnComplete = nil;	-- function(), called once no further matches remain on any page
+local gOwnerCancelConfirmed  = false;
+local gOwnerCancelFailed     = false;	-- the most recent cancel timed out without confirmation - don't count it, but don't retry forever either
+local gOwnerCancelT          = 0;
+local gOwnerCancelPendingName       = nil;	-- the slot's own name/stackSize/buyoutPrice at the moment Atr_CancelAuction was called on it -
+local gOwnerCancelPendingStackSize  = nil;	-- needed again once confirmation arrives, by which point re-reading "owner" index foundIndex
+local gOwnerCancelPendingBuyout     = nil;	-- may no longer refer to the same (or any) auction
 
 local gHlistNeedsUpdate = false;
 
@@ -1255,14 +1287,25 @@ function Atr_OnAuctionOwnedUpdate ()
 
 	gItemPostingInProgress = false;
 
-	-- this single event does double duty: it's both "something about your owned auctions
-	-- changed" AND (if gOwnerScanActive) the arrival of whichever page we just explicitly
-	-- requested via GetOwnerAuctionItems. Handle the scan continuation first, unconditionally -
-	-- everything below still runs too (a posting confirmation can overlap with an in-progress
-	-- scan), it just mustn't flush gActiveAuctions out from under a scan that's still filling it in.
-	local wasScanning = gOwnerScanActive;
+	-- this single event does multiple duty: it's "something about your owned auctions changed"
+	-- AND (if any of the states below are active) the arrival of whichever page we just
+	-- explicitly requested via GetOwnerAuctionItems. Handle whichever walk is in progress first,
+	-- unconditionally - everything below still runs too (a posting confirmation can overlap with
+	-- one of these), it just mustn't flush gActiveAuctions out from under a walk that's still
+	-- filling it in, or out from under the trailing page-0 reset right after one finishes.
+	local wasScanning = gOwnerScanActive or gOwnerScanResetting;
 
-	if (gOwnerScanActive) then
+	-- Atr_OwnerCancelStep (polled from Atr_OnUpdate) does the actual work for a cancel walk; this
+	-- handler's only job for it is to notice once a page it explicitly requested has arrived
+	if (gOwnerCancelState == "pageloading") then
+		gOwnerCancelState = "findmatch";
+	end
+
+	if (gOwnerScanResetting) then
+
+		gOwnerScanResetting = false;		-- just absorb this one; it only exists to repoint the shared owner-page cursor back to 0
+
+	elseif (gOwnerScanActive) then
 
 		local numBatch, totalAuctions = GetNumAuctionItems ("owner");
 
@@ -1289,7 +1332,16 @@ function Atr_OnAuctionOwnedUpdate ()
 		else
 			gOwnerScanActive = false;
 			gHlistNeedsUpdate = true;		-- the full, now-complete list is ready to redraw
+
+			-- Atr_CancelAuction_ByIndex and Atr_Cancel_Undercuts_OnClick assume the shared
+			-- owner-page cursor always sits at page 0 - repoint it back there now that the walk
+			-- is done, instead of leaving it wherever the walk happened to end
+			if (gOwnerScanPage > 0) then
+				gOwnerScanResetting = true;
+				GetOwnerAuctionItems (0);
+			end
 		end
+
 	end
 
 	if (Atr_IsModeActiveAuctions()) then
@@ -1378,6 +1430,9 @@ function auctionator_ChatFrame_OnEvent(event)
 			return;
 		end
 		if (arg1 == ERR_AUCTION_REMOVED) then		-- absorb the Auction Cancelled message
+			if (gOwnerCancelState == "cancelwait") then
+				gOwnerCancelConfirmed = true;
+			end
 			return;
 		end
 		if (arg1 and string.find (arg1, "Auction deposit")) then		-- this server's own per-auction deposit-paid notice - redundant with our "Auctions created for..." summary, and spams once per auction in a batch
@@ -2489,6 +2544,9 @@ function Atr_OnUpdate(self, elapsed)
 		Atr_SellDropZone:EnableMouse (CursorHasItem() and true or false);
 	end
 
+	-- drives a confirmed, one-at-a-time cancel walk forward; a no-op instantly whenever none is active
+	Atr_OwnerCancelStep ();
+
 	-- the core Idle routine
 
 	if (zc.periodic (self, "idle_lastUpdate", 0.2, elapsed)) then
@@ -2981,8 +3039,8 @@ end
 -- as each one's AUCTION_OWNED_LIST_UPDATE arrives, and flags gHlistNeedsUpdate once it's done.
 function Atr_BuildActiveAuctions ()
 
-	if (gOwnerScanActive) then
-		return;		-- already walking the pages; let it finish rather than restarting from page 0
+	if (gOwnerScanActive or gOwnerCancelState ~= nil) then
+		return;		-- another owner-page walk is already in progress; let it finish first rather than interleaving with it
 	end
 
 	gActiveAuctions = {};
@@ -3902,6 +3960,130 @@ end
 
 -----------------------------------------
 
+-- starts a confirmed, one-at-a-time cancel walk (see the gOwnerCancel* state block near the top
+-- of this file for why). matchFn(name, stackSize, buyoutPrice) decides whether a given owner slot
+-- should be cancelled; onEach(name, stackSize, buyoutPrice) fires once a cancel is genuinely
+-- confirmed by the server; onComplete() fires once no further matches remain on any page. Returns
+-- false without starting anything if another owner-page walk (read or cancel) is already active.
+function Atr_StartOwnerCancelWalk (matchFn, onEach, onComplete)
+
+	if (gOwnerScanActive or gOwnerCancelState ~= nil) then
+		return false;
+	end
+
+	gOwnerCancelState      = "findmatch";
+	gOwnerCancelPage       = 0;
+	gOwnerCancelMatchFn    = matchFn;
+	gOwnerCancelOnEach     = onEach;
+	gOwnerCancelOnComplete = onComplete;
+	gOwnerCancelConfirmed  = false;
+	gOwnerCancelFailed     = false;
+
+	return true;
+end
+
+-----------------------------------------
+
+-- polled every frame from Atr_OnUpdate; no-ops instantly whenever no walk is active
+function Atr_OwnerCancelStep ()
+
+	if (gOwnerCancelState == nil or gOwnerCancelState == "pageloading") then
+		return;
+	end
+
+	local now = GetTime();
+
+	if (gOwnerCancelState == "cancelwait") then
+		if (gOwnerCancelConfirmed) then
+
+			-- only ever trust the server's own ERR_AUCTION_REMOVED as proof this actually
+			-- happened - the client's own list/count shrinks optimistically well before the
+			-- server has accepted or rejected anything, and treating that as success is exactly
+			-- what let a cancel claim succeed when it hadn't (confirmed by direct testing)
+			if (gOwnerCancelOnEach) then
+				gOwnerCancelOnEach (gOwnerCancelPendingName, gOwnerCancelPendingStackSize, gOwnerCancelPendingBuyout);
+			end
+			AuctionatorSubtractFromScan (gOwnerCancelPendingName, gOwnerCancelPendingStackSize, gOwnerCancelPendingBuyout);
+			gJustPosted_ItemName = nil;
+
+			-- re-request the current page explicitly rather than trusting GetAuctionItemInfo's
+			-- cache is already fully settled the instant ERR_AUCTION_REMOVED fires - confirmed by
+			-- testing that scanning immediately can miss a genuinely-still-there match right
+			-- after a confirmed cancel (several auctions needed a second manual click to catch),
+			-- the same discipline page-advances already use instead of trusting a stale read
+			GetOwnerAuctionItems (gOwnerCancelPage);
+			gOwnerCancelState = "pageloading";
+			return;
+
+		elseif (now - gOwnerCancelT > 5) then
+			-- no ERR_AUCTION_REMOVED arrived in time - don't count it as cancelled (it may not
+			-- actually have been), but don't retry the exact same slot forever either; move on
+			-- to look for the next match, which will naturally re-target this same auction if
+			-- it's genuinely still there
+			gOwnerCancelFailed = true;
+			GetOwnerAuctionItems (gOwnerCancelPage);
+			gOwnerCancelState = "pageloading";
+			return;
+		else
+			return;
+		end
+	end
+
+	-- "findmatch"
+	local numBatch, totalAuctions = GetNumAuctionItems ("owner");
+
+	local i;
+	local foundIndex;
+	for i = 1, numBatch do
+		local name, texture, stackSize, quality, canUse, level,
+		minBid, minIncrement, buyoutPrice = GetAuctionItemInfo ("owner", i);
+
+		if (name and gOwnerCancelMatchFn (name, stackSize, buyoutPrice)) then
+			foundIndex = i;
+			break;
+		end
+	end
+
+	if (foundIndex) then
+
+		local name, texture, stackSize, quality, canUse, level,
+		minBid, minIncrement, buyoutPrice = GetAuctionItemInfo ("owner", foundIndex);
+
+		gOwnerCancelPendingName      = name;
+		gOwnerCancelPendingStackSize = stackSize;
+		gOwnerCancelPendingBuyout    = buyoutPrice;
+
+		gOwnerCancelConfirmed = false;
+		gOwnerCancelFailed = false;
+		Atr_CancelAuction (foundIndex);
+		gOwnerCancelT = now;
+		gOwnerCancelState = "cancelwait";
+
+	elseif ((gOwnerCancelPage + 1) * 50 < (totalAuctions or 0)) then
+
+		gOwnerCancelPage = gOwnerCancelPage + 1;
+		GetOwnerAuctionItems (gOwnerCancelPage);
+		gOwnerCancelState = "pageloading";
+
+	else
+
+		local page = gOwnerCancelPage;
+		local onComplete = gOwnerCancelOnComplete;
+
+		gOwnerCancelState = nil;
+
+		if (onComplete) then
+			onComplete ();
+		end
+
+		if (page > 0) then
+			GetOwnerAuctionItems (0);		-- put the shared owner-page cursor back at page 0 for whatever reads it next
+		end
+	end
+end
+
+-----------------------------------------
+
 function Atr_LogCancelAuction(numCancelled, itemLink, stackSize, depositLost)
 
 	if (numCancelled < 1) then
@@ -3935,6 +4117,9 @@ end
 
 -----------------------------------------
 
+-- starts a confirmed, one-at-a-time cancel walk for every owner auction matching this row's
+-- item/stack size/buyout price, across every page. Returns immediately; Atr_LogCancelAuction
+-- fires once the whole walk completes (see Atr_StartOwnerCancelWalk/Atr_OwnerCancelStep).
 function Atr_CancelAuction_ByIndex(index)
 
 	local data = gCurrentPane.activeScan.sortedData[index];
@@ -3943,35 +4128,29 @@ function Atr_CancelAuction_ByIndex(index)
 		return;
 	end
 
-	local numCancelled	= 0;
-	local itemLink		= gCurrentPane.activeScan.itemLink;
-	
-	local i = 1;
+	local itemName    = gCurrentPane.activeScan.itemName;
+	local itemLink    = gCurrentPane.activeScan.itemLink;
+	local buyoutPrice = data.buyoutPrice;
+	local stackSize   = data.stackSize;
+	local numCancelled = 0;
 
-	while (true) do
-		local name, texture, count, quality, canUse, level,
-		minBid, minIncrement, buyoutPrice, bidAmount,
-		highBidder, owner = GetAuctionItemInfo ("owner", i);
+	Atr_StartOwnerCancelWalk (
 
-		if (name == nil) then
-			break;
-		end
+		function (name, ss, bp)
+			return (name == itemName and bp == buyoutPrice and ss == stackSize);
+		end,
 
-		if (name == gCurrentPane.activeScan.itemName and buyoutPrice == data.buyoutPrice and count == data.stackSize) then
-			Atr_CancelAuction (i);
+		function (name, ss, bp)
 			numCancelled = numCancelled + 1;
-			AuctionatorSubtractFromScan (name, count, buyoutPrice);
-			gJustPosted_ItemName = nil;
+		end,
+
+		function ()
+			local deposit = Atr_GetRecordedDeposit (itemName, buyoutPrice, stackSize);
+			local depositLost = deposit and (deposit * numCancelled) or nil;
+			Atr_LogCancelAuction (numCancelled, itemLink, stackSize, depositLost);
+			gHlistNeedsUpdate = true;
 		end
-
-		i = i + 1;
-	end
-
-	local deposit = Atr_GetRecordedDeposit (gCurrentPane.activeScan.itemName, data.buyoutPrice, data.stackSize);
-	local depositLost = deposit and (deposit * numCancelled) or nil;
-
-	Atr_LogCancelAuction (numCancelled, itemLink, data.stackSize, depositLost);
-
+	);
 end
 
 -----------------------------------------
@@ -4609,60 +4788,58 @@ end
 
 -----------------------------------------
 
+-- starts a confirmed, one-at-a-time cancel walk for every owner auction (optionally filtered to
+-- one item name) that's currently undercut, across every page. Returns immediately.
 function Atr_Cancel_Undercuts_OnClick (nameToCancel)
 
-	local i;
-	local num = GetNumAuctionItems ("owner");
-
 	local cancelled = {};
-	
-	for i = num, 1, -1 do
-		local name, _, stackSize, _, _, _, _, _, buyoutPrice = GetAuctionItemInfo ("owner", i);
 
-		-- a slot can legitimately return a nil name (sold/expired/pending removal) without that
-		-- being the end of the list - skip it rather than stopping here and missing everything
-		-- below this index
-		if (name and (nameToCancel == nil or zc.StringSame (name, nameToCancel))) then
-			local scan = Atr_FindScan (name);
-			if (scan and scan.absoluteBest and scan.whenScanned ~= 0 and scan.yourBestPrice and scan.yourWorstPrice) then
-				
-				local absBestPrice = scan.absoluteBest.itemPrice;
-				
-				local itemPrice = math.floor (buyoutPrice / stackSize);
-		
-				--	zc.md (i, name, "itemPrice: ", itemPrice, "absBestPrice: ", absBestPrice);
+	Atr_StartOwnerCancelWalk (
 
-				if (itemPrice > absBestPrice) then
+		function (name, stackSize, buyoutPrice)
 
-					Atr_CancelAuction (i);
-					
-					if (cancelled[name] == nil) then
-						cancelled[name]				= {};
-						cancelled[name].num			= 0;
-						cancelled[name].link		= scan.itemLink;
-						cancelled[name].stackSize	= stackSize;
-					end
-					
-					cancelled[name].num = cancelled[name].num + 1;
-					
-					if (scan.yourBestPrice > absBestPrice) then
-						gActiveAuctions[name] = nil;
-					end
-
-					AuctionatorSubtractFromScan (name, stackSize, buyoutPrice);
-					gJustPosted_ItemName = nil;
-				end
+			if (nameToCancel ~= nil and not zc.StringSame (name, nameToCancel)) then
+				return false;
 			end
+
+			local scan = Atr_FindScan (name);
+			if (not (scan and scan.absoluteBest and scan.whenScanned ~= 0 and scan.yourBestPrice and scan.yourWorstPrice)) then
+				return false;
+			end
+
+			local itemPrice = math.floor (buyoutPrice / stackSize);
+
+			return (itemPrice > scan.absoluteBest.itemPrice);
+		end,
+
+		function (name, stackSize, buyoutPrice)
+
+			local scan = Atr_FindScan (name);
+
+			if (cancelled[name] == nil) then
+				cancelled[name]				= {};
+				cancelled[name].num			= 0;
+				cancelled[name].link		= scan.itemLink;
+				cancelled[name].stackSize	= stackSize;
+			end
+
+			cancelled[name].num = cancelled[name].num + 1;
+
+			if (scan.yourBestPrice > scan.absoluteBest.itemPrice) then
+				gActiveAuctions[name] = nil;
+			end
+		end,
+
+		function ()
+			local nm, cancelInfo;
+			for nm, cancelInfo in pairs (cancelled) do
+				Atr_LogCancelAuction (cancelInfo.num, cancelInfo.link, cancelInfo.stackSize);
+			end
+
+			Atr_DisplayHlist();
+			Atr_CheckActives_Frame:Hide();
 		end
-	end
-
-	local nm, cancelInfo;
-	for nm, cancelInfo in pairs (cancelled) do
-		Atr_LogCancelAuction (cancelInfo.num, cancelInfo.link, cancelInfo.stackSize);
-	end
-
-	Atr_DisplayHlist();
-	Atr_CheckActives_Frame:Hide();
+	);
 end
 
 -----------------------------------------
