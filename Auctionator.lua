@@ -128,6 +128,13 @@ local gActiveAuctionRarity = {};		-- same deal, for item rarity (quality)
 local gOwnerScanActive = false;
 local gOwnerScanPage = 0;
 local gOwnerScanResetting = false;
+local gOwnerScanT = 0;			-- GetTime() the current page was requested - if AUCTION_OWNED_LIST_UPDATE
+local gOwnerScanPageHandled = false;	-- never arrives (confirmed: happens when the requested page was already
+					-- the client's current page, e.g. right after Atr_RefreshOwnedAuctions already
+					-- loaded page 0 - no actual fetch happens, so nothing re-fires the event, and
+					-- gOwnerScanActive was left stuck true forever with no recovery), Atr_OwnerScanStep
+					-- (polled from Atr_OnUpdate) processes whatever's already there after a short wait
+					-- instead of blocking on an event that may never come.
 
 -- Cancelling has two separate problems beyond simple pagination, both confirmed by direct
 -- testing: (1) the client's own list/index shrinks optimistically the instant CancelAuction() is
@@ -945,6 +952,18 @@ function Atr_AuctionFrameTab_OnClick (index)
 
 			if (UIDropDownMenu_GetSelectedValue(Atr_DropDown1) == MODE_LIST_ACTIVE) then
 				Atr_CheckActiveButton:Show();
+
+				-- the one-shot trigger at AH-open (Atr_OnAuctionHouseShow) is a blind,
+				-- fire-and-forget request for owned-auction data with no confirmation it
+				-- actually got a response - if that race loses (the AH connection wasn't fully
+				-- settled yet), owned-auction data stays empty for the rest of the session with
+				-- nothing else to retry it. Give it another shot every time this view is
+				-- actually looked at, same as the vanilla Auctions tab gets a fresh chance
+				-- every time the player clicks into it themselves. Skip it if a page-walk
+				-- (read or cancel) is already in flight, to avoid racing that instead.
+				if (not gOwnerScanActive and gOwnerCancelState == nil) then
+					Atr_RefreshOwnedAuctions ();
+				end
 			end
 
 			Atr_DisplayHlist();
@@ -1235,8 +1254,9 @@ function Atr_OnAuctionMultiSellUpdate()
 		Atr_LogMsg (gJustPosted_ItemLink, gJustPosted_StackSize, gJustPosted_BuyoutPrice, stacksTotal);
 		Atr_AddHistoricalPrice (gJustPosted_ItemName, gJustPosted_BuyoutPrice / gJustPosted_StackSize, gJustPosted_StackSize, gJustPosted_ItemLink);
 		Atr_RecordDeposit ();
+		Atr_InvalidateActiveAuctions ();
 	end
-	
+
 end
 
 -----------------------------------------
@@ -1249,6 +1269,7 @@ function Atr_OnAuctionMultiSellFailure()
 	if (gMS_stacksPrev > 0) then
 		Atr_LogMsg (gJustPosted_ItemLink, gJustPosted_StackSize, gJustPosted_BuyoutPrice, gMS_stacksPrev);
 		Atr_RecordDeposit ();
+		Atr_InvalidateActiveAuctions ();
 	end
 
 	if (gCurrentPane.activeScan) then
@@ -1285,6 +1306,69 @@ end
 
 -----------------------------------------
 
+-- the actual per-page work for the owner-scan walk, shared by both Atr_OnAuctionOwnedUpdate (the
+-- event normally arrives once the page we asked for is ready) and Atr_OwnerScanStep's timeout
+-- fallback (the event never arrives if the requested page was already the client's current page -
+-- no real fetch happens, so nothing re-fires AUCTION_OWNED_LIST_UPDATE). gOwnerScanPageHandled
+-- guards against running this twice for the same page if the event fires right after a timeout
+-- already processed it.
+function Atr_OwnerScanProcessPage ()
+
+	if (gOwnerScanPageHandled) then
+		return;
+	end
+	gOwnerScanPageHandled = true;
+
+	local numBatch, totalAuctions = GetNumAuctionItems ("owner");
+
+	local i;
+	for i = 1, numBatch do
+		local name, texture, count, quality = GetAuctionItemInfo ("owner", i);
+
+		if (name and count > 0) then
+			gActiveAuctions[name] = (gActiveAuctions[name] or 0) + count;
+
+			if (texture and not gActiveAuctionIcons[name]) then
+				gActiveAuctionIcons[name] = texture;
+			end
+
+			if (quality and not gActiveAuctionRarity[name]) then
+				gActiveAuctionRarity[name] = quality;
+			end
+		end
+	end
+
+	if ((gOwnerScanPage + 1) * 50 < (totalAuctions or 0)) then
+		gOwnerScanPage = gOwnerScanPage + 1;
+		gOwnerScanT = GetTime();
+		gOwnerScanPageHandled = false;
+		GetOwnerAuctionItems (gOwnerScanPage);
+	else
+		gOwnerScanActive = false;
+		gHlistNeedsUpdate = true;		-- the full, now-complete list is ready to redraw
+
+		-- put the shared owner-page cursor back at page 0 for whatever reads it next, rather
+		-- than leaving it wherever this walk happened to end
+		if (gOwnerScanPage > 0) then
+			gOwnerScanResetting = true;
+			GetOwnerAuctionItems (0);
+		end
+	end
+end
+
+-----------------------------------------
+
+-- polled every frame from Atr_OnUpdate; a no-op unless a walk is active and waiting past its
+-- timeout for a page that the event-driven path (Atr_OnAuctionOwnedUpdate) hasn't picked up yet
+function Atr_OwnerScanStep ()
+
+	if (gOwnerScanActive and not gOwnerScanPageHandled and (GetTime() - gOwnerScanT > 0.5)) then
+		Atr_OwnerScanProcessPage ();
+	end
+end
+
+-----------------------------------------
+
 function Atr_OnAuctionOwnedUpdate ()
 
 	gItemPostingInProgress = false;
@@ -1309,39 +1393,7 @@ function Atr_OnAuctionOwnedUpdate ()
 
 	elseif (gOwnerScanActive) then
 
-		local numBatch, totalAuctions = GetNumAuctionItems ("owner");
-
-		local i;
-		for i = 1, numBatch do
-			local name, texture, count, quality = GetAuctionItemInfo ("owner", i);
-
-			if (name and count > 0) then
-				gActiveAuctions[name] = (gActiveAuctions[name] or 0) + count;
-
-				if (texture and not gActiveAuctionIcons[name]) then
-					gActiveAuctionIcons[name] = texture;
-				end
-
-				if (quality and not gActiveAuctionRarity[name]) then
-					gActiveAuctionRarity[name] = quality;
-				end
-			end
-		end
-
-		if ((gOwnerScanPage + 1) * 50 < (totalAuctions or 0)) then
-			gOwnerScanPage = gOwnerScanPage + 1;
-			GetOwnerAuctionItems (gOwnerScanPage);
-		else
-			gOwnerScanActive = false;
-			gHlistNeedsUpdate = true;		-- the full, now-complete list is ready to redraw
-
-			-- put the shared owner-page cursor back at page 0 for whatever reads it next, rather
-			-- than leaving it wherever this walk happened to end
-			if (gOwnerScanPage > 0) then
-				gOwnerScanResetting = true;
-				GetOwnerAuctionItems (0);
-			end
-		end
+		Atr_OwnerScanProcessPage ();
 
 	end
 
@@ -2377,11 +2429,14 @@ end
 -----------------------------------------
 
 -- the stock "Auctions" tab's OnShow is what actually asks the server for the player's owned
--- auctions at all; our tabs hide that frame instead of showing it, so without this one-time
--- trigger at AH-open, GetNumAuctionItems("owner") would stay completely empty for the whole
--- session. Once this has run once, GetOwnerAuctionItems(page) (see Atr_BuildActiveAuctions) is
--- the real mechanism for pulling fresh/further pages - don't call this again mid-session, it'd
--- race with an in-progress page walk and double-count whatever page happens to be in flight.
+-- auctions at all; our tabs hide that frame instead of showing it, so without triggering this,
+-- GetNumAuctionItems("owner") would stay completely empty. This is a blind, fire-and-forget
+-- request with no confirmation it actually got a response - if the AH connection wasn't fully
+-- settled yet when it's called, it can silently fail, leaving owned-auction data empty for the
+-- rest of the session unless something calls this again later. Safe to call repeatedly (it only
+-- actually does anything while AuctionFrameAuctions is hidden, which is always true while our
+-- own tabs are the ones showing) - just don't call it while a page-walk (read or cancel, see
+-- gOwnerScanActive/gOwnerCancelState) is in flight, since that would race it instead.
 function Atr_RefreshOwnedAuctions ()
 
 	if (AuctionFrameAuctions and not AuctionFrameAuctions:IsShown()) then
@@ -2417,7 +2472,7 @@ end
 function Atr_OnAuctionHouseClosed()
 
 	Atr_HideAllDialogs();
-	
+
 	Atr_CheckingActive_Finish ();
 
 	Atr_ClearScanCache();
@@ -2425,6 +2480,15 @@ function Atr_OnAuctionHouseClosed()
 	gSellPane:ClearSearch();
 	gShopPane:ClearSearch();
 	gMorePane:ClearSearch();
+
+	-- if a read or cancel page-walk was still mid-flight, the AUCTION_OWNED_LIST_UPDATE it was
+	-- waiting on will never arrive now that this AH session is over - left alone, that stuck
+	-- "busy" state would silently block every future attempt at refreshing owned-auction data,
+	-- including every retry, for the rest of the game session (confirmed: reproduces exactly
+	-- this way, and nothing short of a full reload recovers from it otherwise)
+	gOwnerScanActive = false;
+	gOwnerScanResetting = false;
+	gOwnerCancelState = nil;
 
 end
 
@@ -2547,6 +2611,10 @@ function Atr_OnUpdate(self, elapsed)
 
 	-- drives a confirmed, one-at-a-time cancel walk forward; a no-op instantly whenever none is active
 	Atr_OwnerCancelStep ();
+
+	-- catches an owner-scan page whose AUCTION_OWNED_LIST_UPDATE never arrives (confirmed: happens
+	-- when the requested page was already the client's current page); a no-op instantly otherwise
+	Atr_OwnerScanStep ();
 
 	-- the core Idle routine
 
@@ -3030,6 +3098,24 @@ end
 
 -----------------------------------------
 
+-- a stray (not-our-walk) AUCTION_OWNED_LIST_UPDATE flushes gActiveAuctions, but if several arrive
+-- in a burst (confirmed: a cancel walk's per-confirmation pages and a multi-stack post's own
+-- per-stack pings both fire these) the walk that re-fills it can start, and finish, before every
+-- change in that burst has actually happened server-side - caching a mid-operation snapshot that
+-- then just sits there, wrong, since nothing re-triggers another walk once gActiveAuctions is
+-- non-empty again. Call this once a cancel walk or a multi-stack post has fully settled, so the
+-- next render is guaranteed to see it empty and kick off one more walk after the dust has
+-- actually cleared, instead of trusting whichever walk happened to land during the burst.
+function Atr_InvalidateActiveAuctions ()
+
+	gActiveAuctions = {};
+	gActiveAuctionIcons = {};
+	gActiveAuctionRarity = {};
+	gHlistNeedsUpdate = true;
+end
+
+-----------------------------------------
+
 -- GetNumAuctionItems("owner")/GetAuctionItemInfo("owner", i) only ever reflect a single page (up
 -- to 50 entries) of your own auctions at a time - same as a browse/search query. Confirmed via
 -- debug logging: with 73 real active auctions, page 0 alone reported exactly 50, zero gaps, every
@@ -3050,6 +3136,8 @@ function Atr_BuildActiveAuctions ()
 
 	gOwnerScanActive = true;
 	gOwnerScanPage = 0;
+	gOwnerScanT = GetTime();
+	gOwnerScanPageHandled = false;
 	GetOwnerAuctionItems (gOwnerScanPage);
 end
 
@@ -3987,6 +4075,7 @@ function Atr_StartOwnerCancelWalk (matchFn, onEach, onComplete, maxCount)
 	-- there - it may currently be wherever some other, unrelated owner-page read last left it
 	GetOwnerAuctionItems (gOwnerCancelPage);
 	gOwnerCancelState = "pageloading";
+	gOwnerCancelT = GetTime();
 
 	return true;
 end
@@ -4000,6 +4089,8 @@ local function Atr_FinishOwnerCancelWalk ()
 	local onComplete = gOwnerCancelOnComplete;
 
 	gOwnerCancelState = nil;
+
+	Atr_InvalidateActiveAuctions ();
 
 	if (onComplete) then
 		onComplete ();
@@ -4015,11 +4106,27 @@ end
 -- polled every frame from Atr_OnUpdate; no-ops instantly whenever no walk is active
 function Atr_OwnerCancelStep ()
 
-	if (gOwnerCancelState == nil or gOwnerCancelState == "pageloading") then
+	if (gOwnerCancelState == nil) then
 		return;
 	end
 
 	local now = GetTime();
+
+	if (gOwnerCancelState == "pageloading") then
+		-- the event this is normally waiting for (Atr_OnAuctionOwnedUpdate advancing this to
+		-- "findmatch") can simply never arrive, confirmed by testing: if the page just requested
+		-- was already the client's current page, no real fetch happens and nothing re-fires
+		-- AUCTION_OWNED_LIST_UPDATE - this walk would otherwise sit here forever (seen stalling an
+		-- entire cancel until unrelated posting activity happened to deliver some other page's
+		-- update, which this state change doesn't care which page triggered it). Same fallback as
+		-- Atr_OwnerScanStep uses for the read-only walk: after a short wait, stop waiting and just
+		-- look at whatever's already there.
+		if (now - gOwnerCancelT > 0.1) then
+			gOwnerCancelState = "findmatch";
+		else
+			return;
+		end
+	end
 
 	if (gOwnerCancelState == "cancelwait") then
 		if (gOwnerCancelConfirmed) then
@@ -4032,7 +4139,6 @@ function Atr_OwnerCancelStep ()
 				gOwnerCancelOnEach (gOwnerCancelPendingName, gOwnerCancelPendingStackSize, gOwnerCancelPendingBuyout);
 			end
 			AuctionatorSubtractFromScan (gOwnerCancelPendingName, gOwnerCancelPendingStackSize, gOwnerCancelPendingBuyout);
-			gJustPosted_ItemName = nil;
 
 			gOwnerCancelConfirmedCount = gOwnerCancelConfirmedCount + 1;
 
@@ -4048,6 +4154,7 @@ function Atr_OwnerCancelStep ()
 			-- the same discipline page-advances already use instead of trusting a stale read
 			GetOwnerAuctionItems (gOwnerCancelPage);
 			gOwnerCancelState = "pageloading";
+			gOwnerCancelT = now;
 			return;
 
 		elseif (now - gOwnerCancelT > 5) then
@@ -4058,6 +4165,7 @@ function Atr_OwnerCancelStep ()
 			gOwnerCancelFailed = true;
 			GetOwnerAuctionItems (gOwnerCancelPage);
 			gOwnerCancelState = "pageloading";
+			gOwnerCancelT = now;
 			return;
 		else
 			return;
@@ -4099,6 +4207,7 @@ function Atr_OwnerCancelStep ()
 		gOwnerCancelPage = gOwnerCancelPage + 1;
 		GetOwnerAuctionItems (gOwnerCancelPage);
 		gOwnerCancelState = "pageloading";
+		gOwnerCancelT = now;
 
 	else
 		Atr_FinishOwnerCancelWalk ();
@@ -4504,6 +4613,13 @@ function Atr_DropDown1_OnClick()
 	end
 	
 	if (mode == MODE_LIST_ACTIVE) then
+
+		-- same reasoning as the MORE_TAB switch above: give the one-shot AH-open trigger
+		-- another chance, since it can silently race-fail with nothing else to retry it
+		if (not gOwnerScanActive and gOwnerCancelState == nil) then
+			Atr_RefreshOwnedAuctions ();
+		end
+
 		Atr_DisplayHlist();
 	end
 
