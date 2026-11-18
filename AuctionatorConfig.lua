@@ -43,6 +43,11 @@ function Atr_InitOptionsPanels()
 
 	if (AUCTIONATOR_SAVEDVARS == nil) then
 		Atr_ResetSavedVars();
+	elseif (AUCTIONATOR_SAVEDVARS.BIDDING_RATIO == nil) then
+		-- BIDDING_RATIO was added after this table already existed for some accounts - back it
+		-- fill here too since Options can be opened before Atr_Init ever runs (that only fires
+		-- once Blizzard_AuctionUI loads, i.e. after the player has actually visited an auctioneer)
+		AUCTIONATOR_SAVEDVARS.BIDDING_RATIO = 95;	-- matches auctionator_savedvars_defaults.BIDDING_RATIO in Auctionator.lua
 	end
 
 	Atr_SetupBasicOptionsFrame();

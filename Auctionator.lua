@@ -732,6 +732,11 @@ function Atr_Init()
 
 	if (AUCTIONATOR_SAVEDVARS == nil) then
 		Atr_ResetSavedVars();
+	elseif (AUCTIONATOR_SAVEDVARS.BIDDING_RATIO == nil) then
+		-- BIDDING_RATIO was added after this table already existed for some accounts - Atr_ResetSavedVars
+		-- only runs for a completely fresh table, so an existing save from before this key existed
+		-- never gets it backfilled, leaving it nil and crashing Atr_BiddingRatioSlider:SetValue(nil)
+		AUCTIONATOR_SAVEDVARS.BIDDING_RATIO = auctionator_savedvars_defaults.BIDDING_RATIO;
 	end
 
 
